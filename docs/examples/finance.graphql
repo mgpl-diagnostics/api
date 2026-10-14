@@ -1,0 +1,59 @@
+# GST, B2B receivables, partner settlements, cash, bank and periods. Needs accounts:* permissions.
+
+query TaxSetup {
+  taxRules { code category hsnSac taxability ratePercent effectiveFrom note }
+  financeConfig { b2clThresholdPaise tds { section rateBp noPanRateBp thresholdPaise } }
+  verifyWithCA
+}
+
+query Returns($from: DateTime!, $to: DateTime!) {
+  gstr1(from: $from, to: $to) {
+    gstin
+    b2b { invoiceNo valuePaise placeOfSupply items { ratePercent taxablePaise cgstPaise sgstPaise igstPaise } }
+    b2cs { placeOfSupply ratePercent taxablePaise }
+    hsn { b2c { hsnSac taxablePaise } }
+    totals { taxablePaise cgstPaise sgstPaise igstPaise }
+  }
+  gstr3b(from: $from, to: $to) { outwardTaxable { taxablePaise igstPaise cgstPaise sgstPaise } outwardNilExemptPaise }
+}
+
+mutation NewCustomer {
+  createCustomer(input: { code: "CITYHOSP", name: "City Hospital", kind: hospital, gstin: "22AAAAA0000A1Z5", stateCode: "22", creditLimitPaise: 50000000, creditDays: 30 }) {
+    id ledger { name }
+  }
+}
+
+query Statement($customerId: ID!, $from: DateTime!, $to: DateTime!) {
+  customerStatement(customerId: $customerId, from: $from, to: $to) {
+    openingPaise closingPaise
+    open { invoiceNo dueDay duePaise bucket }
+    ageing { notDue d1to30 d31to60 d61to90 d90plus }
+  }
+}
+
+query SettlementPreview($partnerId: ID!) {
+  settlementPreview(partnerId: $partnerId, period: "2026-09") {
+    grossPaise sharePaise tds { section rateBp tdsPaise } netPaise
+    lines { invoiceNo name netPaise sharePaise }
+  }
+}
+
+mutation CloseCash($branchId: ID!) {
+  closeCashDay(input: { branchId: $branchId, day: "2026-10-14", countedPaise: 1245000 }) {
+    bookPaise countedPaise differencePaise voucher { voucherNo }
+  }
+}
+
+mutation ImportBank($branchId: ID!, $ledgerId: ID!, $csv: String!) {
+  importBankStatement(input: { branchId: $branchId, ledgerId: $ledgerId, csv: $csv, fileName: "sbi-oct.csv" }) {
+    added skipped statement { id lineCount }
+  }
+}
+
+mutation Reconcile($ledgerId: ID!) { reconcileBank(ledgerId: $ledgerId) { matched unmatched settlements } }
+
+mutation Lock { setLockDate(input: { upTo: "2026-09-30", reason: "September filed" }) { scope lockedUpTo } }
+
+query ExportGstr1($from: DateTime!, $to: DateTime!) {
+  exportGstr1(from: $from, to: $to, bom: true) { fileName mimeType content }
+}

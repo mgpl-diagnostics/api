@@ -1,0 +1,37 @@
+{
+  "$comment": "Kit sources for `npm run kits` (CI and local builds until every kit is on GitHub Packages with Actions access for this repo). Order = build order. `ref` is a tag or commit on github.com/mgpl-diagnostics/<name>.",
+  "kits": [
+    {
+      "name": "catalog-kit",
+      "ref": "v1.0.0"
+    },
+    {
+      "name": "auth-kit",
+      "ref": "v1.0.0"
+    },
+    {
+      "name": "db-kit",
+      "ref": "v1.1.0"
+    },
+    {
+      "name": "report-kit",
+      "ref": "v2.0.0"
+    },
+    {
+      "name": "tally-kit",
+      "ref": "0629673c04e999ff4a3998d1fda8a9573ca3f68a"
+    },
+    {
+      "name": "client",
+      "ref": "b26a341f91aef3665a646cc6efe0a748d50806f3"
+    },
+    {
+      "name": "invoice-kit",
+      "ref": "v2.0.0"
+    },
+    {
+      "name": "finance-kit",
+      "ref": "dbaafec32fcc2f9c34c1c8878f3fb2e14d2d6356"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The job id "ci" is the required status check on main (see mgpl-diagnostics/.github scripts/protect-repos.mjs).
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Builds every kit from its public repo at the ref in kits.json, then installs. No package token needed.
+      # (Switch to the registry once every kit is published: docs/LOCAL-AGENT-BRIEF.md.)
+      - run: npm run kits
+      - run: npm run typecheck
+      - name: End-to-end tests (GraphQL over HTTP, auth-kit sessions) on PostgreSQL and MongoDB
+        run: npm test
+      - run: npm run build
+      - name: schema.graphql is up to date (run `npm run schema` and commit if this fails)
+        run: npm run schema && git diff --exit-code -- schema.graphql
+      - name: docs/04-api-reference.md is up to date (run `npm run docs:reference` and commit if this fails)
+        run: npm run docs:reference && git diff --exit-code -- docs/04-api-reference.md
+      - name: llms-full.txt is up to date (run `npm run llms` and commit if this fails)
+        run: npm run llms && git diff --exit-code -- llms-full.txt
