@@ -1,0 +1,38 @@
+# Billing a booking, taking payment, and reading the books it posted to.
+
+mutation Bill($branchId: ID!, $patientId: ID!, $bookingId: ID) {
+  issueInvoice(input: {
+    branchId: $branchId, patientId: $patientId, bookingId: $bookingId
+    items: [{ code: "CBC" }, { code: "LFT" }]          # name and MRP from the catalog
+    billDiscountPaise: 5000
+    payments: [{ amountPaise: 20000, mode: upi, reference: "UPI-123" }]
+  }) {
+    id invoiceNo status totalPaise paidPaise duePaise
+    items { name qty ratePaise amountPaise }
+  }
+}
+
+mutation Pay($invoiceId: ID!) {
+  recordPayment(invoiceId: $invoiceId, payment: { amountPaise: 10000, mode: cash }) { status paidPaise duePaise }
+}
+
+query InvoiceWithVouchers($invoiceId: ID!) {
+  invoice(id: $invoiceId) {
+    invoiceNo status
+    vouchers { voucherNo type entries { ledger { name } debitPaise creditPaise } }
+  }
+}
+
+query Books($from: DateTime!, $to: DateTime!) {
+  trialBalance { totalDebitPaise totalCreditPaise differencePaise }
+  profitAndLoss(from: $from, to: $to) { grossProfitPaise netProfitPaise income { group { name } amountPaise } }
+  cashBook(from: $from, to: $to) { openingPaise closingPaise rows { date voucherNo debitPaise creditPaise balancePaise } }
+  dayBook(from: $from, to: $to) { voucherNo type date narration }
+}
+
+mutation Journal($branchId: ID!, $rentLedger: ID!, $cashLedger: ID!) {
+  postVoucher(input: {
+    branchId: $branchId, type: payment, narration: "Rent, October"
+    entries: [{ ledgerId: $rentLedger, debitPaise: 1500000 }, { ledgerId: $cashLedger, creditPaise: 1500000 }]
+  }) { voucherNo date }
+}

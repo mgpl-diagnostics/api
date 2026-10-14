@@ -1,0 +1,71 @@
+# A day at the front desk and the lab bench. Run in order; pass the ids each step returns.
+# Header on every call after Login: Authorization: Bearer <token>
+
+mutation Login {
+  login(input: { email: "desk@example.in", password: "…", orgCode: "MGPL" }) {
+    token
+    expiresAt
+    user { id name roles { role branchId } }
+  }
+}
+
+query Me {
+  viewer {
+    user { name }
+    organization { name branches { id code name stateCode } }
+    canBill: can(permission: "invoice:create")
+  }
+}
+
+query FindTest {
+  catalogSearch(query: "cbc", limit: 3) { score test { id code name mrp sampleType } }
+}
+
+mutation Register($branchId: ID!) {
+  registerPatient(input: { branchId: $branchId, title: "Mrs", name: "Kavita Sharma", sex: female, ageYears: 32, phone: "9800000000" }) {
+    id
+    uhid
+  }
+}
+
+mutation Book($branchId: ID!, $patientId: ID!) {
+  createBooking(input: { branchId: $branchId, patientId: $patientId, tests: [{ testCode: "CBC" }, { testCode: "LFT" }] }) {
+    booking { id bookingNo tests { testCode name pricePaise sampleType } }
+    samples { id barcode sampleType status }
+  }
+}
+
+mutation Collect($sampleId: ID!) {
+  collectSample(id: $sampleId) { status collectedAt }
+}
+
+mutation Receive($sampleId: ID!) {
+  receiveSample(id: $sampleId) { status receivedAt }
+}
+
+mutation StartReport($bookingId: ID!) {
+  createReport(bookingId: $bookingId, testCode: "CBC") { id status }
+}
+
+# Unit, range and flag come from the catalog when left out.
+mutation EnterResults($reportId: ID!) {
+  saveResults(reportId: $reportId, results: [
+    { parameter: "Hemoglobin", value: "10.2" }
+    { parameter: "Total Leucocytes Count", value: "7.5" }
+  ]) {
+    status
+    results { parameter value unit range flag }
+  }
+}
+
+mutation Verify($reportId: ID!) { verifyReport(id: $reportId) { status verifiedAt } }
+mutation Release($reportId: ID!) { releaseReport(id: $reportId) { status releasedAt } }
+
+query PrintReports($bookingId: ID!) {
+  bookingReportDocument(bookingId: $bookingId, format: pdf, variant: header, design: sidebar) {
+    fileName
+    mimeType
+    byteLength
+    base64
+  }
+}

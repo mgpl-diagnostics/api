@@ -1,0 +1,22 @@
+# Documents through GraphQL: PDFs arrive as base64, HTML as a string.
+
+query Templates {
+  reportTemplates { templates { id name category fields { key label unit range } } profiles { id name tests } }
+}
+
+# Preview a report from request data (no stored records), e.g. while entering results.
+query Preview($request: JSON!) {
+  renderReport(request: $request, format: html, variant: non_header) { html }
+}
+# variables: { "request": { "patient": { "name": "Kavita Sharma", "age": 32, "sex": "Female" },
+#                           "tests": [{ "template": "cbc", "results": { "hb": "10.8" } }] } }
+
+query StoredInvoice($invoiceId: ID!) {
+  invoiceDocument(invoiceId: $invoiceId, format: pdf) { fileName mimeType byteLength base64 }
+}
+
+query Quote($request: JSON!) {
+  invoiceTotals(request: $request)
+}
+
+query Letterhead { letterhead(format: pdf) { fileName base64 } }

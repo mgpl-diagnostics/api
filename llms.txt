@@ -1,0 +1,32 @@
+# @mgpl-diagnostics/api
+
+> The MGPL Diagnostics backend (Node.js ≥ 20, TypeScript): one GraphQL endpoint, `POST /graphql` (GraphQL Yoga on Fastify), for sign-in, users and roles, the test catalog, patients, bookings, samples, results and reports, billing, double-entry books, GST returns, B2B receivables, partner settlements, cash and bank, lock dates, CSV exports, and rendered report/invoice documents (base64 PDF or HTML). The kits (auth, db, catalog, report, invoice, tally, finance) are internal libraries behind a controller → service layer. PostgreSQL or MongoDB; Redis optional.
+
+Key facts for agents:
+- Layers: `src/schema` (SDL) → `src/controllers` (authorize, map) → `src/services` (kit calls) → kits. No REST routes except `GET /health`.
+- Auth: `login` returns a bearer token (auth-kit session); every request re-reads the user. Permissions are `resource:action`, checked per branch with `authorize(ctx, perm, branchId)`.
+- Tenant isolation: orgId and actorId come from the session, never from arguments; every id is checked against the organisation.
+- Errors carry `extensions.code`: UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, BAD_USER_INPUT, CONFLICT, PERIOD_LOCKED, CREDIT_LIMIT_EXCEEDED, plus auth-kit codes. Unknown errors are masked.
+- Money is integer paise; days are IST "YYYY-MM-DD"; the financial year is April–March. Billing needs the branch's GST stateCode; GSTR-1/3B need the organisation's GSTIN.
+- Frontends use `createMgplGraphQLClient` from `@mgpl-diagnostics/client`.
+- Generated files (CI-checked): schema.graphql (`npm run schema`), docs/04-api-reference.md (`npm run docs:reference`), llms-full.txt (`npm run llms`).
+
+## Docs
+
+- [README](README.md): what it is, quick start
+- [docs/README.md](docs/README.md): index of the A-to-Z docs (architecture, getting started, API reference, errors, auth, flows, documents, configuration, data and money, testing, deployment, adding a feature, client, glossary)
+- [docs/04-api-reference.md](docs/04-api-reference.md): every operation with its permission
+- [docs/LOCAL-AGENT-BRIEF.md](docs/LOCAL-AGENT-BRIEF.md): releases, org settings and deployment to do outside this repo
+- [AGENTS.md](AGENTS.md): map and rules
+- [schema.graphql](schema.graphql): the SDL
+- [llms-full.txt](llms-full.txt): everything above plus the source
+
+## Source
+
+- [src/server.ts](src/server.ts): Fastify + Yoga, one endpoint
+- [src/container.ts](src/container.ts): db, auth, services
+- [src/graphql/](src/graphql/): context, guards, errors, scalars, loaders, schema assembly
+- [src/schema/](src/schema/): SDL per module
+- [src/controllers/](src/controllers/): resolvers per module
+- [src/services/](src/services/): business logic on the kits
+- [test/run.ts](test/run.ts): end-to-end suite
