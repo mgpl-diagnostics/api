@@ -25,6 +25,7 @@ flowchart LR
 | Books | chart setup, trial balance balances, manual voucher, unbalanced voucher refused |
 | Finance | tax rules, customer + credit invoice, credit limit, statement, credit note, GSTR-1/3B data with the verify-with-CA list, trial balance CSV with TOTAL row, partner + agreement + settlement preview, lock date → `PERIOD_LOCKED` |
 | Documents | booking report PDF and non-header HTML, stored invoice PDF + HTML (totals match), `renderReport` / `invoiceTotals` / `reportTemplates`, bad request → `BAD_USER_INPUT` |
+| Client contract | all client operations valid; every root field covered |
 | Performance | 10 invoices with nested `patient` → one batched lookup (no N+1) |
 
 Not covered yet (good next tests): refunds and invoice cancellation, settlement accrue/pay/cancel, cash
@@ -46,9 +47,9 @@ on both backends, the build, and checks that `schema.graphql`, `docs/04-api-refe
 
 ## The client contract
 
-`kits.json` pins `@mgpl-diagnostics/client`. Once the client ships its GraphQL operations, the suite
-validates every operation the client sends against `buildSchema()` and checks that each root field has
-one, so a renamed field fails here before it reaches an app.
+`kits.json` pins `@mgpl-diagnostics/client`. The `[static]` checks validate every GraphQL operation the
+client sends (138) against `buildSchema()` and check that each query and mutation has one, so a renamed
+or new field fails here before it reaches an app. Change the client first, then bump its ref.
 
 ## Adding a test
 

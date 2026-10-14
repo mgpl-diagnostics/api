@@ -1389,6 +1389,7 @@ flowchart LR
 | Books | chart setup, trial balance balances, manual voucher, unbalanced voucher refused |
 | Finance | tax rules, customer + credit invoice, credit limit, statement, credit note, GSTR-1/3B data with the verify-with-CA list, trial balance CSV with TOTAL row, partner + agreement + settlement preview, lock date → `PERIOD_LOCKED` |
 | Documents | booking report PDF and non-header HTML, stored invoice PDF + HTML (totals match), `renderReport` / `invoiceTotals` / `reportTemplates`, bad request → `BAD_USER_INPUT` |
+| Client contract | all client operations valid; every root field covered |
 | Performance | 10 invoices with nested `patient` → one batched lookup (no N+1) |
 
 Not covered yet (good next tests): refunds and invoice cancellation, settlement accrue/pay/cancel, cash
@@ -1410,9 +1411,9 @@ on both backends, the build, and checks that `schema.graphql`, `docs/04-api-refe
 
 ## The client contract
 
-`kits.json` pins `@mgpl-diagnostics/client`. Once the client ships its GraphQL operations, the suite
-validates every operation the client sends against `buildSchema()` and checks that each root field has
-one, so a renamed field fails here before it reaches an app.
+`kits.json` pins `@mgpl-diagnostics/client`. The `[static]` checks validate every GraphQL operation the
+client sends (138) against `buildSchema()` and check that each query and mutation has one, so a renamed
+or new field fails here before it reaches an app. Change the client first, then bump its ref.
 
 ## Adding a test
 
@@ -1954,7 +1955,7 @@ flowchart TD
     },
     {
       "name": "client",
-      "ref": "b26a341f91aef3665a646cc6efe0a748d50806f3"
+      "ref": "d973de38d278e5047f9591d7171431be37d045d9"
     },
     {
       "name": "invoice-kit",
@@ -7947,6 +7948,7 @@ import { join } from "node:path";
 import { hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization, type Db, type Repositories } from "@mgpl-diagnostics/db-kit";
 import { financePosting, istDay } from "@mgpl-diagnostics/finance-kit";
+import { OPERATIONS } from "@mgpl-diagnostics/client";
 import { parse, validate } from "graphql";
 import { loadConfig } from "../src/config/env";
 import { buildSchema } from "../src/graphql/schema";
@@ -8171,6 +8173,13 @@ function staticChecks() {
     const errs = validate(schema, parse(readFileSync(new URL(f, dir), "utf8")));
     ok(errs.length === 0, `docs/examples/${f} is valid${errs.length ? `: ${errs.map((e) => e.message).join("; ")}` : ""}`);
   }
+  // the client contract: every operation @mgpl-diagnostics/client sends is valid here, and every root field has one
+  const invalid = Object.entries(OPERATIONS).flatMap(([name, op]) => validate(schema, parse(op.document)).map((e) => `${name}: ${e.message}`));
+  ok(invalid.length === 0, `client: all ${Object.keys(OPERATIONS).length} GraphQL operations are valid${invalid.length ? `: ${invalid.join("; ")}` : ""}`);
+  const covered = new Set(Object.values(OPERATIONS).map((op) => op.field));
+  const roots = [...Object.keys(schema.getQueryType()!.getFields()), ...Object.keys(schema.getMutationType()!.getFields())];
+  const missing = roots.filter((f) => !covered.has(f));
+  ok(missing.length === 0, `client: every query and mutation has a client operation${missing.length ? ` (missing: ${missing.join(", ")})` : ""}`);
 }
 
 async function main() {

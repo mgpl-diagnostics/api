@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization, type Db, type Repositories } from "@mgpl-diagnostics/db-kit";
 import { financePosting, istDay } from "@mgpl-diagnostics/finance-kit";
+import { OPERATIONS } from "@mgpl-diagnostics/client";
 import { parse, validate } from "graphql";
 import { loadConfig } from "../src/config/env";
 import { buildSchema } from "../src/graphql/schema";
@@ -232,6 +233,13 @@ function staticChecks() {
     const errs = validate(schema, parse(readFileSync(new URL(f, dir), "utf8")));
     ok(errs.length === 0, `docs/examples/${f} is valid${errs.length ? `: ${errs.map((e) => e.message).join("; ")}` : ""}`);
   }
+  // the client contract: every operation @mgpl-diagnostics/client sends is valid here, and every root field has one
+  const invalid = Object.entries(OPERATIONS).flatMap(([name, op]) => validate(schema, parse(op.document)).map((e) => `${name}: ${e.message}`));
+  ok(invalid.length === 0, `client: all ${Object.keys(OPERATIONS).length} GraphQL operations are valid${invalid.length ? `: ${invalid.join("; ")}` : ""}`);
+  const covered = new Set(Object.values(OPERATIONS).map((op) => op.field));
+  const roots = [...Object.keys(schema.getQueryType()!.getFields()), ...Object.keys(schema.getMutationType()!.getFields())];
+  const missing = roots.filter((f) => !covered.has(f));
+  ok(missing.length === 0, `client: every query and mutation has a client operation${missing.length ? ` (missing: ${missing.join(", ")})` : ""}`);
 }
 
 async function main() {
