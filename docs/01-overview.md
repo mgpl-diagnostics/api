@@ -33,6 +33,7 @@ service layer.
 | [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | Invoice PDFs and HTML, invoice arithmetic |
 | [tally-kit](https://github.com/mgpl-diagnostics/tally-kit) | Our own double-entry engine: ledgers, vouchers, books reports |
 | [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | GST, GSTR-1/3B data, receivables, settlements, cash and bank, lock dates, exports |
+| [security-kit](https://github.com/mgpl-diagnostics/security-kit) | Security headers on every response, the client IP behind proxies (`TRUST_PROXY`); in the client, the device signals |
 | [client](https://github.com/mgpl-diagnostics/client) | Not used by the API; the frontend SDK that calls it |
 
 ## Design choices

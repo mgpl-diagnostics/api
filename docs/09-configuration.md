@@ -16,7 +16,7 @@ Copy `.env.example` to `.env` for local work; never commit it.
 | `GRAPHIQL` | on in development | GraphiQL at the endpoint (GET) |
 | `INTROSPECTION` | on in development | Off adds `NoSchemaIntrospectionCustomRule` |
 | `BODY_LIMIT_BYTES` | `2000000` | Request body limit (bank CSV imports count) |
-| `TRUST_PROXY` | `false` | `true` behind a load balancer, so login limits see the client IP |
+| `TRUST_PROXY` | `false` | How many proxies in front of the API append to `X-Forwarded-For`: `true` = 1 (a load balancer), `2` for CDN + load balancer. Login limits and sessions then see the client IP; entries left of the trusted proxies (which any client can send) are ignored |
 | `MGPL_SAMPLES` | on in development | Demo report/invoice samples in `documents` |
 | `SESSION_IDLE_MS` | `43200000` (12 h) | |
 | `SESSION_MAX_AGE_MS` | `2592000000` (30 days) | |

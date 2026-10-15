@@ -76,7 +76,7 @@ src/
     scalars.ts          DateTime, Day, JSON
     loaders.ts          per-request BatchLoader per entity (no N+1)
     limits.ts           depthLimit
-    device.ts           DeviceInput → auth-kit DeviceSignals (moves to security-kit later)
+    device.ts           DeviceInput (collected by security-kit in the client) → auth-kit DeviceSignals
   jobs/
     types.ts            QUEUES, job payloads, JobInfo, JobQueue, JobFailure
     processors.ts       password-reset, document rendering (call services)

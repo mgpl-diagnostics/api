@@ -2,6 +2,10 @@
   "$comment": "Kit sources for `npm run kits` (CI and local builds until every kit is on GitHub Packages with Actions access for this repo). Order = build order. `ref` is a tag or commit on github.com/mgpl-diagnostics/<name>.",
   "kits": [
     {
+      "name": "security-kit",
+      "ref": "aee153f38cc31b9ebe07abd9f634333678eb4edf"
+    },
+    {
       "name": "mail-kit",
       "ref": "3e217f56ae36fab59412dcb005862f41ad7120d4"
     },

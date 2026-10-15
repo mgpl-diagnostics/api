@@ -258,7 +258,23 @@ async function fromConfig(url: string) {
   await clientSdk(app);
   const pre = await app.inject({ method: "OPTIONS", url: "/graphql", headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" } });
   ok(pre.statusCode < 300 && pre.headers["access-control-allow-origin"] !== undefined, "[config] CORS preflight answered");
+  const res = await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json" }, payload: JSON.stringify({ query: "{ health { ok } }" }) });
+  ok(res.headers["x-content-type-options"] === "nosniff" && res.headers["x-frame-options"] === "DENY" && res.headers["referrer-policy"] === "no-referrer", "[config] security-kit headers on GraphQL responses");
+  ok((await app.inject({ url: "/health" })).headers["x-content-type-options"] === "nosniff", "[config] security-kit headers on /health");
   await app.close();
+
+  // client IP: X-Forwarded-For counts only through TRUST_PROXY proxies, so a client cannot choose its IP
+  const sessionIp = async (env: Record<string, string>) => {
+    const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, ...env }) });
+    const s = await buildServer(c);
+    const headers = { "content-type": "application/json", "x-forwarded-for": "6.6.6.6, 203.0.113.9" };
+    const r = (await s.inject({ method: "POST", url: "/graphql", headers, payload: JSON.stringify({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken } }' }) })).json() as Gql;
+    const me = (await s.inject({ method: "POST", url: "/graphql", headers: { ...headers, authorization: `Bearer ${r.data?.login.accessToken}` }, payload: JSON.stringify({ query: "{ mySessions { current ip } }" }) })).json() as Gql;
+    await s.close();
+    return me.data?.mySessions.find((x: any) => x.current)?.ip as string | undefined;
+  };
+  ok((await sessionIp({ TRUST_PROXY: "1" })) === "203.0.113.9", "[config] TRUST_PROXY=1: the IP the load balancer saw, never the spoofed left entry");
+  ok((await sessionIp({})) === "127.0.0.1", "[config] no TRUST_PROXY: X-Forwarded-For is ignored");
 }
 
 /** @mgpl-diagnostics/client's session manager against this server: device signals, auto refresh, single flight, logout. */
