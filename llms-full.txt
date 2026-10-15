@@ -320,7 +320,7 @@ service layer.
 | [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | Invoice PDFs and HTML, invoice arithmetic |
 | [ledger-kit](https://github.com/mgpl-diagnostics/ledger-kit) | Our own double-entry engine: ledgers, vouchers, books reports |
 | [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | GST, GSTR-1/3B data, receivables, settlements, cash and bank, lock dates, exports |
-| [security-kit](https://github.com/mgpl-diagnostics/security-kit) | Security headers on every response, the client IP behind proxies (`TRUST_PROXY`); in the client, the device signals |
+| [security-kit](https://github.com/mgpl-diagnostics/security-kit) | Security headers on every response, the client IP and the TLS fingerprint behind proxies (`TRUST_PROXY`, `TLS_FINGERPRINT_HEADER`); in the client, the device signals |
 | [client](https://github.com/mgpl-diagnostics/client) | Not used by the API; the frontend SDK that calls it |
 
 ## Design choices
@@ -968,6 +968,26 @@ sends one. The client collects the signals with [security-kit](https://github.co
 ends the user's other sessions; `resetPassword`, an administrator's `setUserPassword` and `disableUser`
 end all of them.
 
+### TLS fingerprint
+
+A TLS fingerprint (JA4, or the older JA3) describes the client's TLS library from its ClientHello. No
+client code can collect it: whatever terminates TLS computes it. In production that is the reverse proxy,
+which sends it in a request header; set `TLS_FINGERPRINT_HEADER` to that header's name (e.g. `x-ja4`).
+
+| Step | Where |
+|---|---|
+| The proxy sets the header | security-kit README, "TLS fingerprint": nginx with a JA4 module (`proxy_set_header X-JA4 $http_ssl_ja4;`), Envoy (`%TLS_JA4_FINGERPRINT%`), CloudFront (`CloudFront-Viewer-JA4-Fingerprint`), Cloudflare Bot Management (`cf.bot_management.ja4`) |
+| The api reads it, only through trusted proxies | security-kit's `fastifySecurity({ trustedHops, tlsFingerprintHeader })` → `request.security.tlsFingerprint` (`src/server.ts`), then `ctx.tlsFingerprint` |
+| login and `refreshSession` pass it to auth-kit | `src/controllers/auth.controller.ts` |
+| Stored as a SHA-256 hash on the session | auth-kit `Session.tlsFingerprintHash` |
+| On refresh, a different one is audited | `auth.tls_fingerprint_changed` (both hashes); `auth.device_mismatch` records `tls: same / changed / null` |
+
+The header has the same trust model as X-Forwarded-For: it is ignored unless `TRUST_PROXY` ≥ 1 (the api
+refuses to start with `TLS_FINGERPRINT_HEADER` but no trusted proxy), and the proxy must overwrite any
+value a client sent. A missing or malformed fingerprint is never an error. A change never ends the
+session, whatever `DEVICE_BINDING` says: browser updates and TLS-inspecting networks change it too. It is
+not in the GraphQL schema; clients send nothing new.
+
 ### Password reset
 
 `requestPasswordReset(email, orgCode?)` always returns `true`, whether or not the account exists, and
@@ -1353,6 +1373,7 @@ variables already set in the real environment win over the file.
 | `INTROSPECTION` | on in development | Off adds `NoSchemaIntrospectionCustomRule` |
 | `BODY_LIMIT_BYTES` | `2000000` | Request body limit (bank CSV imports count) |
 | `TRUST_PROXY` | `false` | How many proxies in front of the API append to `X-Forwarded-For`: `true` = 1 (a load balancer), `2` for CDN + load balancer. Login limits and sessions then see the client IP; entries left of the trusted proxies (which any client can send) are ignored |
+| `TLS_FINGERPRINT_HEADER` | empty (off) | Header the TLS-terminating proxy sets to the client's JA4 (or JA3) TLS fingerprint, e.g. `x-ja4`. Read only through `TRUST_PROXY` proxies (refused at startup without one); stored hashed on the session, a change audited ([06-auth-and-permissions.md](06-auth-and-permissions.md#tls-fingerprint)) |
 | `MGPL_SAMPLES` | on in development | Demo report/invoice samples in `documents` |
 | `SESSION_IDLE_MS` | `43200000` (12 h) | |
 | `SESSION_MAX_AGE_MS` | `2592000000` (30 days) | |
@@ -1591,6 +1612,7 @@ report-kit's resvg is a native module: build the image on the same platform it r
 | ☐ | `CORS_ORIGINS` lists exactly the app origins (no `*`) |
 | ☐ | `GRAPHIQL` and `INTROSPECTION` off (the defaults in production) |
 | ☐ | `TRUST_PROXY=true` behind one load balancer, `TRUST_PROXY=2` behind a CDN plus a load balancer (login limits use the client IP) |
+| ☐ | Optional: the proxy sets `x-ja4` to the client's JA4 TLS fingerprint and `TLS_FINGERPRINT_HEADER=x-ja4` ([06-auth-and-permissions.md](06-auth-and-permissions.md#tls-fingerprint)) |
 | ☐ | `MGPL_SAMPLES` off (the default in production) |
 | ☐ | Signature files mounted read-only; `MGPL_SIGNATURE_*_FILE` point at them |
 | ☐ | `PASSWORD_RESET_URL` points at the app's reset page, and a mailer is wired (below) |
@@ -2108,7 +2130,7 @@ Done when: no repo imports `@mgpl-diagnostics/db-kit/graphql` (`gh search code "
 
 Follow [12-deployment.md](12-deployment.md). In particular:
 
-- `REDIS_URL` for more than one server; `CORS_ORIGINS` set to the app origins; `TRUST_PROXY=true`.
+- `REDIS_URL` for more than one server; `CORS_ORIGINS` set to the app origins; `TRUST_PROXY=true`; optionally `TLS_FINGERPRINT_HEADER=x-ja4` with a proxy that sets it (docs/06).
 - Real signature images in a secret volume, `MGPL_SIGNATURE_HEADER_FILE` / `MGPL_SIGNATURE_NONHEADER_FILE`.
   Never commit them.
 - `JWT_SECRET` from your secret store (≥ 32 random characters: `openssl rand -base64 48`), the same on every API server and worker.
@@ -2230,7 +2252,7 @@ flowchart TD
   "kits": [
     {
       "name": "security-kit",
-      "ref": "v0.2.0"
+      "ref": "v0.3.0"
     },
     {
       "name": "mail-kit",
@@ -2242,7 +2264,7 @@ flowchart TD
     },
     {
       "name": "auth-kit",
-      "ref": "v1.2.0"
+      "ref": "v1.3.0"
     },
     {
       "name": "db-kit",
@@ -2283,7 +2305,7 @@ flowchart TD
 
 Key facts for agents:
 - Layers: `src/schema` (SDL) → `src/controllers` (authorize, map) → `src/services` (kit calls) → kits. No REST routes except `GET /health`.
-- Auth: `login(input: { email, password, device })` returns an access JWT (15 min, Bearer) and a single-use refresh token; `refreshSession(refreshToken, device)` rotates them; a refresh from another deviceId ends the session (DEVICE_BINDING). Every request still checks the session and re-reads the user. `JWT_SECRET` required in production.
+- Auth: `login(input: { email, password, device })` returns an access JWT (15 min, Bearer) and a single-use refresh token; `refreshSession(refreshToken, device)` rotates them; a refresh from another deviceId ends the session (DEVICE_BINDING). With TLS_FINGERPRINT_HEADER (needs TRUST_PROXY) the proxy's JA4/JA3 TLS fingerprint is stored hashed on the session and a change is audited (auth.tls_fingerprint_changed). Every request still checks the session and re-reads the user. `JWT_SECRET` required in production.
 - Worker: `src/worker.ts` (`npm run worker`) runs BullMQ jobs from Redis (`src/jobs/`): password-reset emails (MAIL_WEBHOOK_URL) and documents (`startDocumentJob`, `job(id)`). Without REDIS_URL jobs run in the API process. Permissions are `resource:action`, checked per branch with `authorize(ctx, perm, branchId)`.
 - Tenant isolation: orgId and actorId come from the session, never from arguments; every id is checked against the organisation.
 - Errors carry `extensions.code`: UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, BAD_USER_INPUT, CONFLICT, PERIOD_LOCKED, CREDIT_LIMIT_EXCEEDED, plus auth-kit codes. Unknown errors are masked.
@@ -2344,7 +2366,7 @@ Key facts for agents:
   },
   "dependencies": {
     "@graphql-tools/schema": "^10.1.4",
-    "@mgpl-diagnostics/auth-kit": "^1.2.0",
+    "@mgpl-diagnostics/auth-kit": "^1.3.0",
     "@mgpl-diagnostics/catalog-kit": "^1.0.0",
     "@mgpl-diagnostics/db-kit": "^2.0.0",
     "@mgpl-diagnostics/finance-kit": "^1.0.0",
@@ -2352,7 +2374,7 @@ Key facts for agents:
     "@mgpl-diagnostics/ledger-kit": "^0.1.0",
     "@mgpl-diagnostics/mail-kit": "^0.1.0",
     "@mgpl-diagnostics/report-kit": "^2.0.0",
-    "@mgpl-diagnostics/security-kit": "^0.2.0",
+    "@mgpl-diagnostics/security-kit": "^0.3.0",
     "bullmq": "^5.81.5",
     "fastify": "^5.12.7",
     "graphql": "^16.14.0",
@@ -4583,6 +4605,11 @@ export interface Config {
   /** Behind a proxy (nginx, a load balancer): read the client IP from X-Forwarded-For. */
   /** Reverse proxies in front of the API that append to X-Forwarded-For (TRUST_PROXY). 0 = use the socket address. */
   trustedHops: number;
+  /**
+   * Request header in which the TLS-terminating proxy sends the client's TLS fingerprint (JA4 / JA3), e.g.
+   * "x-ja4" (TLS_FINGERPRINT_HEADER). Read only through trusted proxies, so it needs TRUST_PROXY ≥ 1. null = off.
+   */
+  tlsFingerprintHeader: string | null;
   /** Demo report and invoice samples (report-kit / invoice-kit) in `documents`. */
   samples: boolean;
   /** Session lifetime knobs, passed to auth-kit. */
@@ -4651,6 +4678,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (secrets.some((v) => v.length < 32)) throw new Error("Every JWT_SECRET needs at least 32 characters");
   const deviceBinding = (env.DEVICE_BINDING || "enforce") as Config["deviceBinding"];
   if (!["enforce", "flag", "off"].includes(deviceBinding)) throw new Error(`DEVICE_BINDING must be enforce, flag or off, got "${deviceBinding}"`);
+  const trustedHops = hops(env.TRUST_PROXY);
+  const tlsFingerprintHeader = env.TLS_FINGERPRINT_HEADER?.trim().toLowerCase() || null;
+  if (tlsFingerprintHeader && !/^[a-z0-9-]{1,64}$/.test(tlsFingerprintHeader)) throw new Error(`TLS_FINGERPRINT_HEADER must be a header name like x-ja4, got "${tlsFingerprintHeader}"`);
+  // without a trusted proxy any client could send the header, so it would never be read: say so instead
+  if (tlsFingerprintHeader && trustedHops < 1) throw new Error("TLS_FINGERPRINT_HEADER needs TRUST_PROXY (the proxy that sets the header must be trusted)");
   const smtpUrl = env.SMTP_URL || null;
   if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) throw new Error("SMTP_URL must start with smtp:// or smtps://");
   if (smtpUrl && !env.MAIL_FROM && !dev) throw new Error('MAIL_FROM is required with SMTP_URL (e.g. "Maa Gayatri Path Lab <no-reply@your-domain>")');
@@ -4665,7 +4697,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     graphiql: bool(env.GRAPHIQL, dev),
     introspection: bool(env.INTROSPECTION, dev),
     bodyLimit: int(env.BODY_LIMIT_BYTES, 2_000_000),
-    trustedHops: hops(env.TRUST_PROXY),
+    trustedHops,
+    tlsFingerprintHeader,
     samples: bool(env.MGPL_SAMPLES, dev),
     session: { idleMs: int(env.SESSION_IDLE_MS, 12 * 3600_000), maxAgeMs: int(env.SESSION_MAX_AGE_MS, 30 * 86400_000) },
     resetUrl: env.PASSWORD_RESET_URL || null,
@@ -4832,11 +4865,11 @@ export const authController = withErrorCodes({
 
   Mutation: {
     login: async (_: unknown, { input: { device, ...input } }: { input: { email: string; password: string; orgCode?: string | null; device?: DeviceInput | null } }, ctx: Ctx) => {
-      const r = await ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(device) });
+      const r = await ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(device), tlsFingerprint: ctx.tlsFingerprint });
       return { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt };
     },
     refreshSession: (_: unknown, a: { refreshToken: string; device?: DeviceInput | null }, ctx: Ctx) =>
-      ctx.services.auth.refresh({ refreshToken: a.refreshToken, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device) }),
+      ctx.services.auth.refresh({ refreshToken: a.refreshToken, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device), tlsFingerprint: ctx.tlsFingerprint }),
     logout: async (_: unknown, a: { refreshToken?: string | null }, ctx: Ctx) => {
       const token = a.refreshToken || ctx.token;
       if (!token) throw unauthenticated();
@@ -5527,6 +5560,8 @@ export interface RequestContext extends AuthContext {
   token: string | null;
   ip?: string;
   userAgent?: string;
+  /** TLS client fingerprint (JA4 / JA3) from the trusted TLS proxy (TLS_FINGERPRINT_HEADER); passed to auth-kit, which stores a hash. */
+  tlsFingerprint?: string;
   /** Per-request batch loaders, created on first use. */
   readonly loaders: Loaders;
 }
@@ -5537,7 +5572,7 @@ export function bearerToken(header: string | null | undefined): string | null {
 }
 
 /** Builds the request context from the Authorization header, through auth-kit. */
-export async function createContext(container: Container, req: { headers: Headers; ip?: string }): Promise<RequestContext> {
+export async function createContext(container: Container, req: { headers: Headers; ip?: string; tlsFingerprint?: string }): Promise<RequestContext> {
   const token = bearerToken(req.headers.get("authorization"));
   const auth = await container.auth.context(token);
   let loaders: Loaders | undefined;
@@ -5549,6 +5584,7 @@ export async function createContext(container: Container, req: { headers: Header
     token,
     ip: req.ip,
     userAgent: req.headers.get("user-agent") ?? undefined,
+    tlsFingerprint: req.tlsFingerprint,
     get loaders() {
       return (loaders ??= createLoaders(repos));
     },
@@ -5564,6 +5600,8 @@ export async function createContext(container: Container, req: { headers: Header
 ```ts
 // Device signals (DeviceInput, collected in the client by @mgpl-diagnostics/security-kit) → auth-kit's
 // DeviceSignals. auth-kit cleans and caps the values (cleanDeviceSignals); this only maps shapes.
+// The TLS fingerprint is not a client signal: the trusted TLS proxy sends it (security-kit, src/server.ts)
+// and the controllers pass ctx.tlsFingerprint to auth-kit next to the device.
 import type { DeviceSignals } from "@mgpl-diagnostics/auth-kit";
 
 export interface DeviceInput {
@@ -7327,7 +7365,8 @@ import { buildSchema } from "./graphql/schema";
 type ServerContext = { req: FastifyRequest; reply: FastifyReply };
 
 /** What fastifySecurity put on the request (falls back to the socket address). */
-const securityOf = (req: FastifyRequest): Pick<RequestSecurity, "ip"> => (req as FastifyRequest & { security?: RequestSecurity | null }).security ?? { ip: req.ip };
+const securityOf = (req: FastifyRequest): Pick<RequestSecurity, "ip" | "tlsFingerprint"> =>
+  (req as FastifyRequest & { security?: RequestSecurity | null }).security ?? { ip: req.ip, tlsFingerprint: null };
 
 /** Validation rules on every operation: depth limit, and no introspection unless enabled. */
 function rules(introspection: boolean): Plugin {
@@ -7349,11 +7388,13 @@ export async function buildServer(container: Container): Promise<FastifyInstance
 
   // security-kit: security headers on every response, and request.security = { ip, userAgent, … } with the
   // client IP taken from X-Forwarded-For only through the configured number of proxies (TRUST_PROXY).
-  // CORS stays with Yoga below. GraphiQL (development) loads scripts, so it gets no CSP.
+  // With TLS_FINGERPRINT_HEADER, request.security.tlsFingerprint is the JA4/JA3 the TLS-terminating proxy
+  // sent (only through those trusted proxies). CORS stays with Yoga below. GraphiQL (development) loads scripts, so it gets no CSP.
   await app.register(
     fastifySecurity({
       headers: { hsts: config.env === "production" ? 31_536_000 : false, csp: config.graphiql ? false : API_CSP },
       trustedHops: config.trustedHops,
+      tlsFingerprintHeader: config.tlsFingerprintHeader ?? undefined,
     }),
   );
 
@@ -7367,7 +7408,10 @@ export async function buildServer(container: Container): Promise<FastifyInstance
     cors: { origin: config.corsOrigins.includes("*") ? "*" : config.corsOrigins, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["content-type", "authorization"] },
     logging: config.env === "test" ? false : "warn",
     plugins: [rules(config.introspection)],
-    context: ({ request, req }) => createContext(container, { headers: request.headers, ip: securityOf(req).ip ?? undefined }),
+    context: ({ request, req }) => {
+      const sec = securityOf(req);
+      return createContext(container, { headers: request.headers, ip: sec.ip ?? undefined, tlsFingerprint: sec.tlsFingerprint?.value });
+    },
   });
 
   app.route({
@@ -7425,12 +7469,12 @@ export class AuthService {
 
   // ---------------------------------------------------------------- sessions
 
-  login(input: { email: string; password: string; orgCode?: string | null; ip?: string; userAgent?: string; device?: DeviceSignals }) {
+  login(input: { email: string; password: string; orgCode?: string | null; ip?: string; userAgent?: string; device?: DeviceSignals; tlsFingerprint?: string }) {
     return this.auth.login({ ...input, orgCode: input.orgCode ?? undefined });
   }
 
   /** Spends a refresh token: a new access token and the next refresh token (rotation). */
-  async refresh(input: { refreshToken: string; ip?: string; userAgent?: string; device?: DeviceSignals }) {
+  async refresh(input: { refreshToken: string; ip?: string; userAgent?: string; device?: DeviceSignals; tlsFingerprint?: string }) {
     const p = await this.auth.refresh(input);
     return { token: p.accessToken, expiresAt: p.accessExpiresAt, ...p };
   }
@@ -9053,7 +9097,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
+import { hashPassword, hashTlsFingerprint, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization, type Db, type Repositories } from "@mgpl-diagnostics/db-kit";
 import { financePosting, istDay } from "@mgpl-diagnostics/finance-kit";
 import { createMgplGraphQLClient, OPERATIONS } from "@mgpl-diagnostics/client";
@@ -9322,6 +9366,36 @@ async function fromConfig(url: string) {
   };
   ok((await sessionIp({ TRUST_PROXY: "1" })) === "203.0.113.9", "[config] TRUST_PROXY=1: the IP the load balancer saw, never the spoofed left entry");
   ok((await sessionIp({})) === "127.0.0.1", "[config] no TRUST_PROXY: X-Forwarded-For is ignored");
+
+  // TLS fingerprint: read from TLS_FINGERPRINT_HEADER only through trusted proxies, stored hashed, a change audited
+  const JA4 = "t13d1516h2_8daaf6152771_e5627efa2ab1", JA4b = "t13d1517h2_8daaf6152771_b1ff8ab2d16f";
+  {
+    const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, TRUST_PROXY: "1", TLS_FINGERPRINT_HEADER: "X-JA4" }) });
+    const s = await buildServer(c);
+    const call = async (query: string, ja4: string, token?: string) =>
+      (await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", "x-ja4": ja4, ...(token ? { authorization: `Bearer ${token}` } : {}) }, payload: JSON.stringify({ query }) })).json() as Gql;
+    const device = 'device: { deviceId: "dev-tls-test-0001" }';
+    const l = await call(`mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!", ${device} }) { accessToken refreshToken user { id } } }`, JA4);
+    const sid = c.auth.verifyAccessToken(l.data?.login.accessToken)?.sid;
+    const stored = () => c.auth.sessionsOf(l.data?.login.user.id).then((all) => all.find((x) => x.id === sid));
+    ok((await stored())?.tlsFingerprintHash === hashTlsFingerprint(JA4) && !JSON.stringify(await stored()).includes(JA4), "[config] TLS_FINGERPRINT_HEADER: login stores the proxy's TLS fingerprint as a hash only");
+    const r = await call(`mutation { refreshSession(refreshToken: "${l.data?.login.refreshToken}", ${device}) { accessToken } }`, JA4b);
+    const audit = await call('{ auditLog(entity: "session") { action data } }', JA4b, r.data?.refreshSession.accessToken);
+    const changed = audit.data?.auditLog.find((e: any) => e.action === "auth.tls_fingerprint_changed");
+    ok(!!r.data?.refreshSession.accessToken && changed?.data?.to === hashTlsFingerprint(JA4b) && (await stored())?.tlsFingerprintHash === hashTlsFingerprint(JA4b), "[config] a refresh with another TLS fingerprint works and is audited (hashes)");
+    await s.close();
+  }
+  {
+    const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url }) });
+    const s = await buildServer(c);
+    const l = (await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", "x-ja4": JA4 }, payload: JSON.stringify({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken user { id } } }' }) })).json() as Gql;
+    const sid = c.auth.verifyAccessToken(l.data?.login.accessToken)?.sid;
+    ok((await c.auth.sessionsOf(l.data?.login.user.id)).find((x) => x.id === sid)?.tlsFingerprintHash === undefined, "[config] without TLS_FINGERPRINT_HEADER a client's x-ja4 header is ignored");
+    await s.close();
+  }
+  let refused = "";
+  try { loadConfig({ NODE_ENV: "test", TLS_FINGERPRINT_HEADER: "x-ja4" }); } catch (e) { refused = (e as Error).message; }
+  ok(/TRUST_PROXY/.test(refused), "[config] TLS_FINGERPRINT_HEADER without TRUST_PROXY is refused (the header would be spoofable)");
 }
 
 /** @mgpl-diagnostics/client's session manager against this server: device signals, auto refresh, single flight, logout. */

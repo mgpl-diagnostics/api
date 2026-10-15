@@ -142,7 +142,7 @@ Done when: no repo imports `@mgpl-diagnostics/db-kit/graphql` (`gh search code "
 
 Follow [12-deployment.md](12-deployment.md). In particular:
 
-- `REDIS_URL` for more than one server; `CORS_ORIGINS` set to the app origins; `TRUST_PROXY=true`.
+- `REDIS_URL` for more than one server; `CORS_ORIGINS` set to the app origins; `TRUST_PROXY=true`; optionally `TLS_FINGERPRINT_HEADER=x-ja4` with a proxy that sets it (docs/06).
 - Real signature images in a secret volume, `MGPL_SIGNATURE_HEADER_FILE` / `MGPL_SIGNATURE_NONHEADER_FILE`.
   Never commit them.
 - `JWT_SECRET` from your secret store (≥ 32 random characters: `openssl rand -base64 48`), the same on every API server and worker.

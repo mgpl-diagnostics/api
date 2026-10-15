@@ -70,6 +70,26 @@ sends one. The client collects the signals with [security-kit](https://github.co
 ends the user's other sessions; `resetPassword`, an administrator's `setUserPassword` and `disableUser`
 end all of them.
 
+### TLS fingerprint
+
+A TLS fingerprint (JA4, or the older JA3) describes the client's TLS library from its ClientHello. No
+client code can collect it: whatever terminates TLS computes it. In production that is the reverse proxy,
+which sends it in a request header; set `TLS_FINGERPRINT_HEADER` to that header's name (e.g. `x-ja4`).
+
+| Step | Where |
+|---|---|
+| The proxy sets the header | security-kit README, "TLS fingerprint": nginx with a JA4 module (`proxy_set_header X-JA4 $http_ssl_ja4;`), Envoy (`%TLS_JA4_FINGERPRINT%`), CloudFront (`CloudFront-Viewer-JA4-Fingerprint`), Cloudflare Bot Management (`cf.bot_management.ja4`) |
+| The api reads it, only through trusted proxies | security-kit's `fastifySecurity({ trustedHops, tlsFingerprintHeader })` → `request.security.tlsFingerprint` (`src/server.ts`), then `ctx.tlsFingerprint` |
+| login and `refreshSession` pass it to auth-kit | `src/controllers/auth.controller.ts` |
+| Stored as a SHA-256 hash on the session | auth-kit `Session.tlsFingerprintHash` |
+| On refresh, a different one is audited | `auth.tls_fingerprint_changed` (both hashes); `auth.device_mismatch` records `tls: same / changed / null` |
+
+The header has the same trust model as X-Forwarded-For: it is ignored unless `TRUST_PROXY` ≥ 1 (the api
+refuses to start with `TLS_FINGERPRINT_HEADER` but no trusted proxy), and the proxy must overwrite any
+value a client sent. A missing or malformed fingerprint is never an error. A change never ends the
+session, whatever `DEVICE_BINDING` says: browser updates and TLS-inspecting networks change it too. It is
+not in the GraphQL schema; clients send nothing new.
+
 ### Password reset
 
 `requestPasswordReset(email, orgCode?)` always returns `true`, whether or not the account exists, and

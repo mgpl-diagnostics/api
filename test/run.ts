@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
+import { hashPassword, hashTlsFingerprint, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization, type Db, type Repositories } from "@mgpl-diagnostics/db-kit";
 import { financePosting, istDay } from "@mgpl-diagnostics/finance-kit";
 import { createMgplGraphQLClient, OPERATIONS } from "@mgpl-diagnostics/client";
@@ -275,6 +275,36 @@ async function fromConfig(url: string) {
   };
   ok((await sessionIp({ TRUST_PROXY: "1" })) === "203.0.113.9", "[config] TRUST_PROXY=1: the IP the load balancer saw, never the spoofed left entry");
   ok((await sessionIp({})) === "127.0.0.1", "[config] no TRUST_PROXY: X-Forwarded-For is ignored");
+
+  // TLS fingerprint: read from TLS_FINGERPRINT_HEADER only through trusted proxies, stored hashed, a change audited
+  const JA4 = "t13d1516h2_8daaf6152771_e5627efa2ab1", JA4b = "t13d1517h2_8daaf6152771_b1ff8ab2d16f";
+  {
+    const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, TRUST_PROXY: "1", TLS_FINGERPRINT_HEADER: "X-JA4" }) });
+    const s = await buildServer(c);
+    const call = async (query: string, ja4: string, token?: string) =>
+      (await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", "x-ja4": ja4, ...(token ? { authorization: `Bearer ${token}` } : {}) }, payload: JSON.stringify({ query }) })).json() as Gql;
+    const device = 'device: { deviceId: "dev-tls-test-0001" }';
+    const l = await call(`mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!", ${device} }) { accessToken refreshToken user { id } } }`, JA4);
+    const sid = c.auth.verifyAccessToken(l.data?.login.accessToken)?.sid;
+    const stored = () => c.auth.sessionsOf(l.data?.login.user.id).then((all) => all.find((x) => x.id === sid));
+    ok((await stored())?.tlsFingerprintHash === hashTlsFingerprint(JA4) && !JSON.stringify(await stored()).includes(JA4), "[config] TLS_FINGERPRINT_HEADER: login stores the proxy's TLS fingerprint as a hash only");
+    const r = await call(`mutation { refreshSession(refreshToken: "${l.data?.login.refreshToken}", ${device}) { accessToken } }`, JA4b);
+    const audit = await call('{ auditLog(entity: "session") { action data } }', JA4b, r.data?.refreshSession.accessToken);
+    const changed = audit.data?.auditLog.find((e: any) => e.action === "auth.tls_fingerprint_changed");
+    ok(!!r.data?.refreshSession.accessToken && changed?.data?.to === hashTlsFingerprint(JA4b) && (await stored())?.tlsFingerprintHash === hashTlsFingerprint(JA4b), "[config] a refresh with another TLS fingerprint works and is audited (hashes)");
+    await s.close();
+  }
+  {
+    const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url }) });
+    const s = await buildServer(c);
+    const l = (await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", "x-ja4": JA4 }, payload: JSON.stringify({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken user { id } } }' }) })).json() as Gql;
+    const sid = c.auth.verifyAccessToken(l.data?.login.accessToken)?.sid;
+    ok((await c.auth.sessionsOf(l.data?.login.user.id)).find((x) => x.id === sid)?.tlsFingerprintHash === undefined, "[config] without TLS_FINGERPRINT_HEADER a client's x-ja4 header is ignored");
+    await s.close();
+  }
+  let refused = "";
+  try { loadConfig({ NODE_ENV: "test", TLS_FINGERPRINT_HEADER: "x-ja4" }); } catch (e) { refused = (e as Error).message; }
+  ok(/TRUST_PROXY/.test(refused), "[config] TLS_FINGERPRINT_HEADER without TRUST_PROXY is refused (the header would be spoofable)");
 }
 
 /** @mgpl-diagnostics/client's session manager against this server: device signals, auto refresh, single flight, logout. */
