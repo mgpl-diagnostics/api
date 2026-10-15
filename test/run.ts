@@ -3,7 +3,7 @@
 //   npm test                     both backends (first run downloads the database binaries)
 //   TEST_BACKENDS=pg npm test    PostgreSQL only (when MongoDB binaries cannot be downloaded)
 import { spawn, type ChildProcess } from "node:child_process";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
@@ -12,10 +12,12 @@ import { financePosting, istDay } from "@mgpl-diagnostics/finance-kit";
 import { createMgplGraphQLClient, OPERATIONS } from "@mgpl-diagnostics/client";
 import { parse, validate } from "graphql";
 import { Redis } from "ioredis";
+import { QueryTypes, Sequelize } from "sequelize";
 import { loadConfig } from "../src/config/env";
 import { buildSchema } from "../src/graphql/schema";
 import { createContainer } from "../src/container";
 import { buildServer } from "../src/server";
+import { shutdown } from "../src/lifecycle";
 import { startWorkers } from "../src/jobs";
 import type { Mailer } from "../src/services/auth.service";
 import { createMailer, memoryTransport } from "@mgpl-diagnostics/mail-kit";
@@ -377,6 +379,147 @@ async function workerSuite(pgUrl: string) {
   }
 }
 
+/**
+ * PgBouncer in transaction mode in front of PostgreSQL: the whole pg suite again through it, then two API
+ * replicas sharing PgBouncer and Redis (docs/17-scaling.md). Needs `pgbouncer` (PGBOUNCER_BIN) and Redis
+ * (REDIS_URL, or `redis-server`); skipped with a note otherwise. CI installs both.
+ */
+async function pgbouncerSuite(pgPort: number, database: string) {
+  console.log("\n[pgbouncer]");
+  const bin = process.env.PGBOUNCER_BIN || "pgbouncer";
+  const dir = join(tmpdir(), `mgpl-api-pgbouncer-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true, mode: 0o755 });
+  const port = 64331;
+  const poolSize = 3;
+  // the same settings as deploy/docker-compose.yml: transaction pooling, a small server pool
+  writeFileSync(join(dir, "userlist.txt"), '"postgres" "postgres"\n', { mode: 0o644 });
+  writeFileSync(
+    join(dir, "pgbouncer.ini"),
+    [
+      "[databases]",
+      `${database} = host=127.0.0.1 port=${pgPort} dbname=${database}`,
+      "[pgbouncer]",
+      "listen_addr = 127.0.0.1",
+      `listen_port = ${port}`,
+      "unix_socket_dir =",
+      "auth_type = scram-sha-256",
+      `auth_file = ${join(dir, "userlist.txt")}`,
+      "pool_mode = transaction",
+      `default_pool_size = ${poolSize}`,
+      "max_client_conn = 200",
+      "ignore_startup_parameters = extra_float_digits",
+      "",
+    ].join("\n"),
+    { mode: 0o644 },
+  );
+  // pgbouncer refuses to run as root
+  const args = [...(process.getuid?.() === 0 ? ["-u", "nobody"] : []), join(dir, "pgbouncer.ini")];
+  let bouncer: ChildProcess;
+  try {
+    bouncer = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
+    await new Promise<void>((resolve, reject) => {
+      bouncer.once("error", reject);
+      bouncer.once("exit", (c) => reject(new Error(`pgbouncer exited with ${c}`)));
+      setTimeout(resolve, 500);
+    });
+  } catch (e) {
+    console.log(`  (skipped: ${(e as Error).message}; install pgbouncer or set PGBOUNCER_BIN)`);
+    rmSync(dir, { recursive: true, force: true });
+    return;
+  }
+  bouncer.removeAllListeners("exit");
+  const url = `postgres://postgres:postgres@127.0.0.1:${port}/${database}`;
+  let redisUrl = process.env.REDIS_URL;
+  let redisServer: ChildProcess | undefined;
+  try {
+    // 1. every pg check again, through PgBouncer in transaction mode
+    const db = await createDb({ backend: "pg", pg: { url }, posting: financePosting });
+    try {
+      await suite(db, "pgbouncer");
+    } finally {
+      await db.close();
+    }
+
+    // 2. two replicas behind one load balancer: shared PgBouncer, shared Redis, nothing in process memory
+    console.log("\n[replicas]");
+    if (!redisUrl) {
+      try {
+        redisServer = spawn("redis-server", ["--port", "6392", "--save", "", "--appendonly", "no"], { stdio: "ignore" });
+        await new Promise<void>((resolve, reject) => {
+          redisServer!.once("error", reject);
+          setTimeout(resolve, 400);
+        });
+        redisUrl = "redis://127.0.0.1:6392";
+      } catch {
+        console.log("  (skipped: set REDIS_URL or install redis-server)");
+        return;
+      }
+    }
+    // what every replica shares: the database (through PgBouncer), Redis and JWT_SECRET
+    const replica = async () => {
+      const config = loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, REDIS_URL: redisUrl, JWT_SECRET: "replicas-share-one-jwt-secret-0123456789", DB_POOL_MAX: "4", DB_SYNC: "false", TRUST_PROXY: "1", QUEUE_PREFIX: `mgpl-replicas-${process.pid}` });
+      return buildServer(await createContainer({ config }));
+    };
+    const [a, b] = [await replica(), await replica()];
+    const gql = async (app: typeof a, query: string, variables?: Record<string, unknown>, token?: string, ip = "203.0.113.20"): Promise<Gql> =>
+      (await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", "x-forwarded-for": ip, ...(token ? { authorization: `Bearer ${token}` } : {}) }, payload: JSON.stringify({ query, variables }) })).json() as Gql;
+    try {
+      const health = await a.inject({ url: "/health" });
+      ok(health.statusCode === 200 && health.json().database === "ok" && health.json().redis === "ok", "[replicas] GET /health checks the database (through PgBouncer) and Redis");
+
+      const login = (await gql(a, 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!", device: { deviceId: "dev-replica-0001" } }) { accessToken refreshToken } }')).data?.login;
+      ok((await gql(b, "{ organization { code } }", {}, login?.accessToken)).data?.organization.code === "APL", "[replicas] a session started on replica A works on replica B (sessions in Redis)");
+      const next = (await gql(b, 'mutation($r: String!) { refreshSession(refreshToken: $r, device: { deviceId: "dev-replica-0001" }) { accessToken refreshToken } }', { r: login?.refreshToken })).data?.refreshSession;
+      ok(!!next?.accessToken && code(await gql(a, 'mutation($r: String!) { refreshSession(refreshToken: $r, device: { deviceId: "dev-replica-0001" }) { accessToken } }', { r: login?.refreshToken })) === "INVALID_TOKEN", "[replicas] refresh on B; the spent refresh token is refused on A (single use across replicas)");
+
+      // many writes at once from both replicas: 2 × DB_POOL_MAX client connections over a 3-connection server pool
+      const token = next.accessToken;
+      const branchId = (await gql(a, "{ organization { branches { id code } } }", {}, token)).data?.organization.branches.find((x: any) => x.code === "A01")?.id;
+      const patientId = (await gql(a, '{ patients(search: "Asha") { id } }', {}, token)).data?.patients[0]?.id;
+      const issued = await Promise.all(
+        Array.from({ length: 16 }, (_, i) =>
+          gql(i % 2 ? a : b, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { invoiceNo } }", { i: { branchId, patientId, items: [{ code: "CBC" }], payments: [{ amountPaise: 10000, mode: "cash" }] } }, token),
+        ),
+      );
+      const numbers = issued.map((r) => r.data?.issueInvoice.invoiceNo);
+      ok(numbers.every(Boolean) && new Set(numbers).size === 16, `[replicas] 16 concurrent invoices (with payments) on both replicas: all posted, all numbers unique${issued.find((r) => r.errors) ? ` (${JSON.stringify(issued.find((r) => r.errors)?.errors)})` : ""}`);
+      const direct = new Sequelize(`postgres://postgres:postgres@127.0.0.1:${pgPort}/${database}`, { dialect: "postgres", logging: false });
+      const [row] = await direct.query<{ n: string }>("SELECT count(*) AS n FROM pg_stat_activity WHERE datname = :database AND pid <> pg_backend_pid()", { replacements: { database }, type: QueryTypes.SELECT });
+      const servers = Number(row?.n);
+      await direct.close();
+      ok(servers <= poolSize, `[replicas] PostgreSQL saw ${servers} connection(s) from PgBouncer for 2 replicas × DB_POOL_MAX=4 (pool ${poolSize})`);
+      const tb = (await gql(b, "{ trialBalance { totalDebitPaise totalCreditPaise } }", {}, token)).data?.trialBalance;
+      ok(!!tb && tb.totalDebitPaise === tb.totalCreditPaise, "[replicas] the books still balance after the concurrent burst");
+
+      ok((await gql(b, "mutation { logout }", {}, token)).data?.logout === true && code(await gql(a, "{ organization { id } }", {}, token)) === "UNAUTHENTICATED", "[replicas] logout on B ends the session on A at once");
+
+      // login limits are shared: 10 attempts per window in all, not 10 per replica
+      let limitedAt = 0;
+      for (let i = 1; i <= 12 && !limitedAt; i++) {
+        const r = await gql(i % 2 ? a : b, 'mutation { login(input: { email: "nobody@replicas.test", password: "wrong-password" }) { token } }', {}, undefined, "198.51.100.7");
+        if (code(r) === "RATE_LIMITED") limitedAt = i;
+      }
+      ok(limitedAt > 0 && limitedAt <= 11, `[replicas] the login rate limit is shared across replicas (limited at attempt ${limitedAt || "never"})`);
+
+      // graceful shutdown: A drains (/health 503, still serving), then closes; B carries on
+      const stopping = shutdown(a, { drainMs: 400, timeoutMs: 10_000 });
+      const drainingHealth = await a.inject({ url: "/health" });
+      const servedWhileDraining = (await gql(a, "{ health { ok } }")).data?.health.ok;
+      ok(drainingHealth.statusCode === 503 && drainingHealth.json().draining === true && servedWhileDraining === true && (await a.inject({ url: "/health?live=1" })).statusCode === 200, "[replicas] on shutdown /health → 503 (draining) while requests are still served; ?live=1 stays 200");
+      await stopping;
+      ok((await b.inject({ url: "/health" })).statusCode === 200, "[replicas] replica A shut down cleanly; B is still ready");
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  } finally {
+    redisServer?.kill();
+    bouncer.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** Static checks: the documented example operations stay valid against the schema. */
 function staticChecks() {
   console.log("\n[static]");
@@ -436,6 +579,8 @@ async function main() {
       await suite(db, "pg");
       await fromConfig(url);
       await workerSuite(url);
+      await pg.createDatabase("mgpl_api_pgb");
+      await pgbouncerSuite(54331, "mgpl_api_pgb");
     } finally {
       await db.close();
       await pg.stop();

@@ -17,6 +17,11 @@ variables already set in the real environment win over the file.
 | `GRAPHQL_PATH` | `/graphql` | The one endpoint |
 | `DB_BACKEND` | `pg` | `pg` or `mongo` |
 | `DATABASE_URL` | local default in development; **required** in production | Postgres URL, or a MongoDB URI with `replicaSet=` |
+| `DB_POOL_MAX` | `10` | Connections this process keeps open (Sequelize pool / MongoDB driver pool), per API server and worker. Behind PgBouncer: (replicas + workers) × this ≤ PgBouncer's `max_client_conn` ([17-scaling.md](17-scaling.md#sizing-the-pools)) |
+| `DB_POOL_MIN` | `0` | Connections kept open when idle |
+| `DB_POOL_IDLE_MS` | `10000` | Close a pooled connection after this long idle |
+| `DB_POOL_ACQUIRE_MS` | `30000` | A query that waited this long for a free connection fails |
+| `DB_SYNC` | `true` | Create missing tables / indexes on start. `false` on every replica when several run, with `npm run db:sync` once per release |
 | `REDIS_URL` | empty | Sessions, refresh tokens, login limits, db-kit's read cache and the job queues (BullMQ). Required for more than one server and for the worker |
 | `CORS_ORIGINS` | `*` in development, empty in production | Comma-separated origins. `*` is refused in production |
 | `GRAPHIQL` | on in development | GraphiQL at the endpoint (GET) |
@@ -40,13 +45,20 @@ variables already set in the real environment win over the file.
 | `MGPL_SIGNATURE_HEADER_FILE` | — | PNG for the header variant (outside the repo) |
 | `MGPL_SIGNATURE_NONHEADER_FILE` | — | PNG for the non-header variant |
 | `MGPL_SIGNATURE_FILE` | — | One file for both |
+| `SHUTDOWN_DRAIN_MS` | `5000` in production, `0` otherwise | On SIGTERM, `GET /health` answers 503 this long while requests are still served ([17-scaling.md](17-scaling.md#graceful-shutdown)) |
+| `SHUTDOWN_TIMEOUT_MS` | `30000` | Exit anyway this long after the signal (API and worker) |
+
+`docker-compose.yml` reads a few more from `.env` (not the API): `API_REPLICAS`, `HTTP_PORT`,
+`POSTGRES_PASSWORD`, `POSTGRES_MAX_CONNECTIONS` and the `PGBOUNCER_*` pool settings
+([17-scaling.md](17-scaling.md#docker-compose)).
 
 Seed-only variables (`npm run seed`): `SEED_ORG_NAME`, `SEED_ORG_CODE`, `SEED_ORG_GSTIN` (optional),
 `SEED_BRANCH_CODE`, `SEED_BRANCH_NAME`, `SEED_BRANCH_STATE`, `SEED_OWNER_NAME`, `SEED_OWNER_EMAIL`,
 `SEED_OWNER_PASSWORD`.
 
 Test-only: `TEST_BACKENDS=pg,mongo` (default both), `DEBUG=1` prints resolver errors,
-`MONGOMS_SYSTEM_BINARY` points mongodb-memory-server at a local `mongod`.
+`MONGOMS_SYSTEM_BINARY` points mongodb-memory-server at a local `mongod`, `PGBOUNCER_BIN` the `pgbouncer`
+binary for the PgBouncer and replica checks.
 
 ## Finance configuration
 

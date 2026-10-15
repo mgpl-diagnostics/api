@@ -6,6 +6,7 @@ import type { Container } from "./container";
 import { createContext, type RequestContext } from "./graphql/context";
 import { depthLimit } from "./graphql/limits";
 import { buildSchema } from "./graphql/schema";
+import { isDraining } from "./lifecycle";
 
 type ServerContext = { req: FastifyRequest; reply: FastifyReply };
 
@@ -65,13 +66,21 @@ export async function buildServer(container: Container): Promise<FastifyInstance
     },
   });
 
-  app.get("/health", async (_req, reply) => {
-    try {
-      await container.db.rawRepos.orgs.count();
-      return { ok: true };
-    } catch {
-      return reply.status(503).send({ ok: false });
-    }
+  // GET /health: readiness for load balancers. 200 when this replica can serve (database, and Redis when
+  // configured, answer; not shutting down), else 503. GET /health?live=1: liveness, 200 while the process
+  // runs (restart on failure only; a database outage should not restart every replica).
+  app.get<{ Querystring: { live?: string } }>("/health", async (req, reply) => {
+    if (req.query.live !== undefined) return { ok: true, live: true };
+    if (isDraining(app)) return reply.status(503).send({ ok: false, draining: true });
+    // a down Redis queues commands instead of failing them: give each check 2 s
+    const check = (p: Promise<unknown>) =>
+      Promise.race([p, new Promise((_, reject) => setTimeout(reject, 2_000).unref())]).then(() => "ok" as const, () => "unreachable" as const);
+    const [database, redis] = await Promise.all([
+      check(container.db.rawRepos.orgs.count()),
+      container.db.redis ? check(container.db.redis.ping()) : Promise.resolve(undefined),
+    ]);
+    const ok = database === "ok" && redis !== "unreachable";
+    return reply.status(ok ? 200 : 503).send({ ok, database, ...(redis ? { redis } : {}) });
   });
 
   app.addHook("onClose", async () => container.close());

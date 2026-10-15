@@ -13,6 +13,7 @@
     "worker:dev": "tsx watch src/worker.ts",
     "start": "node dist/main.js",
     "worker": "node dist/worker.js",
+    "db:sync": "node dist/sync.js",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "tsx test/run.ts",

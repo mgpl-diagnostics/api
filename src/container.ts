@@ -33,6 +33,11 @@ export interface Container {
   close(): Promise<void>;
 }
 
+// DB_POOL_*: the same knobs for both backends. With PgBouncer in transaction mode the pool holds client
+// connections to PgBouncer, which multiplexes them over its own (smaller) pool of server connections.
+const pgPool = ({ db: { pool } }: Config) => ({ max: pool.max, min: pool.min, idle: pool.idleMs, acquire: pool.acquireMs });
+const mongoPool = ({ db: { pool } }: Config) => ({ maxPoolSize: pool.max, minPoolSize: pool.min, maxIdleTimeMS: pool.idleMs, waitQueueTimeoutMS: pool.acquireMs });
+
 export async function createContainer(o: ContainerOptions): Promise<Container> {
   const { config } = o;
   const ownsDb = !o.db;
@@ -40,7 +45,8 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
     o.db ??
     (await createDb({
       backend: config.db.backend,
-      ...(config.db.backend === "pg" ? { pg: { url: config.db.url } } : { mongo: { uri: config.db.url } }),
+      ...(config.db.backend === "pg" ? { pg: { url: config.db.url, options: { pool: pgPool(config) } } } : { mongo: { uri: config.db.url, options: mongoPool(config) } }),
+      sync: config.db.sync,
       redis: config.redisUrl ?? undefined,
       // invoices and payments post to the books through finance-kit → ledger-kit
       posting: financePosting,
