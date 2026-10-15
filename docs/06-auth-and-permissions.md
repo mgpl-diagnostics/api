@@ -74,8 +74,8 @@ end all of them.
 
 `requestPasswordReset(email, orgCode?)` always returns `true`, whether or not the account exists, and
 only queues a job. The worker ([16-worker.md](16-worker.md)), or the API itself without Redis, creates
-the token and sends `PASSWORD_RESET_URL?token=…` through the `Mailer` (`MAIL_WEBHOOK_URL`, or
-`createContainer({ config, mailer })`). The token is never returned by the API and never stored raw.
+the token and sends `PASSWORD_RESET_URL?token=…` through the `Mailer` (mail-kit over `SMTP_URL`,
+`MAIL_WEBHOOK_URL`, or `createContainer({ config, mailer })`). The token is never returned by the API and never stored raw.
 `resetPassword(token, newPassword)` consumes it once.
 
 ## Permissions

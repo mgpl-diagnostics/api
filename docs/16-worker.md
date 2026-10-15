@@ -12,7 +12,7 @@ flowchart LR
   R --> W2["worker #2"]
   W1 & W2 --> SVC["the same services<br/>(auth-kit · db-kit · report-kit · invoice-kit)"]
   SVC --> DB[("PostgreSQL / MongoDB")]
-  W1 -- "Mailer (MAIL_WEBHOOK_URL)" --> M["email relay"]
+  W1 -- "mail-kit (SMTP_URL)" --> M["mail server"]
   C -- "job(id) (poll)" --> API
   API -- "Job.fromId" --> R
 ```
@@ -69,7 +69,8 @@ what development and one-server installs get.
 | `QUEUE_PREFIX` | `mgpl` | Redis key prefix (separate apps or environments) |
 | `WORKER_CONCURRENCY` | `4` | Jobs per worker at once, per queue |
 | `JOB_RESULT_TTL_MS` | `3600000` | How long finished jobs (and their documents) stay readable |
-| `MAIL_WEBHOOK_URL` | — | Email relay: POST `{ to, subject, text }` JSON (your provider's API or a small function) |
+| `SMTP_URL`, `MAIL_FROM` | — | Mail through mail-kit (our mail design language → HTML + text, sent over SMTP) |
+| `MAIL_WEBHOOK_URL` | — | Fallback when `SMTP_URL` is not set: POST `{ to, subject, text }` JSON to a relay |
 
 Shutdown (`SIGTERM`) lets the jobs in hand finish, then closes the database.
 

@@ -28,7 +28,9 @@ Copy `.env.example` to `.env` for local work; never commit it.
 | `QUEUE_PREFIX` | `mgpl` | BullMQ key prefix ([16-worker.md](16-worker.md)) |
 | `WORKER_CONCURRENCY` | `4` | Jobs per worker at once, per queue |
 | `JOB_RESULT_TTL_MS` | `3600000` (1 h) | How long finished jobs and their documents stay readable |
-| `MAIL_WEBHOOK_URL` | empty | Email relay for reset links: POST `{ to, subject, text }` |
+| `SMTP_URL` | empty | Mail through mail-kit: `smtps://user:pass@host:465` (TLS) or `smtp://user:pass@host:587` (STARTTLS). Preferred over `MAIL_WEBHOOK_URL` |
+| `MAIL_FROM` | — (required with `SMTP_URL` in production) | Sender, e.g. `Maa Gayatri Path Lab <no-reply@your-domain>` |
+| `MAIL_WEBHOOK_URL` | empty | Email relay for reset links when `SMTP_URL` is not set: POST `{ to, subject, text }` |
 | `MGPL_SIGNATURE_HEADER_FILE` | — | PNG for the header variant (outside the repo) |
 | `MGPL_SIGNATURE_NONHEADER_FILE` | — | PNG for the non-header variant |
 | `MGPL_SIGNATURE_FILE` | — | One file for both |

@@ -12,7 +12,7 @@ flowchart LR
   R --> W1["worker #1"]
   R --> W2["worker #2"]
   W1 & W2 --> DB
-  W1 & W2 -- "MAIL_WEBHOOK_URL" --> MAIL["email relay"]
+  W1 & W2 -- "mail-kit (SMTP_URL)" --> MAIL["mail server"]
   A1 & A2 -. reads .-> SIG["signature files<br/>(secret volume)"]
   W1 & W2 -. reads .-> SIG
 ```
@@ -42,7 +42,7 @@ report-kit's resvg is a native module: build the image on the same platform it r
 |---|---|
 | ☐ | `NODE_ENV=production`, `DATABASE_URL`, `REDIS_URL` set from secrets |
 | ☐ | `JWT_SECRET` set from secrets (≥ 32 random characters, e.g. `openssl rand -base64 48`), the same on every API server |
-| ☐ | At least one worker running (`node dist/worker.js`) with `MAIL_WEBHOOK_URL` set |
+| ☐ | At least one worker running (`node dist/worker.js`) with `SMTP_URL` and `MAIL_FROM` set |
 | ☐ | `CORS_ORIGINS` lists exactly the app origins (no `*`) |
 | ☐ | `GRAPHIQL` and `INTROSPECTION` off (the defaults in production) |
 | ☐ | `TRUST_PROXY=true` behind the load balancer (login limits use the client IP) |
@@ -57,9 +57,15 @@ report-kit's resvg is a native module: build the image on the same platform it r
 
 ## Sending password-reset emails
 
-Set `MAIL_WEBHOOK_URL`: the worker (or the API, without Redis) POSTs `{ to, subject, text }` JSON to it.
-Point it at your email provider's HTTP API or a small function in front of it. Without it, reset links
-are not sent (the API still answers `true`). To send another way, embed with your own `Mailer`, in the
+Set `SMTP_URL` and `MAIL_FROM`. The worker (or the API, without Redis) sends the mail with
+[mail-kit](https://github.com/mgpl-diagnostics/mail-kit): the "password-reset" mail is written in its mail
+design language and goes out as HTML plus plain text, in the lab's brand (name, address, phone from
+report-kit's lab profile). Any SMTP provider works (Gmail or Zoho app passwords, Amazon SES, Brevo);
+mail-kit refuses to send without TLS to a remote server. The provider's SPF and DKIM records must cover
+the domain in `MAIL_FROM`.
+
+Without `SMTP_URL`, `MAIL_WEBHOOK_URL` still works: the worker POSTs `{ to, subject, text }` JSON to it.
+With neither, reset links are not sent (the API still answers `true`). To send another way, embed with your own `Mailer`, in the
 worker's process when you run workers:
 
 ```ts

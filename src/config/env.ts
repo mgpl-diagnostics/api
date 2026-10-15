@@ -39,6 +39,11 @@ export interface Config {
   deviceBinding: "enforce" | "flag" | "off";
   /** Background jobs (BullMQ on REDIS_URL): key prefix and how many jobs a worker runs at once. */
   jobs: { prefix: string; concurrency: number; keepResultsMs: number };
+  /**
+   * Mail (mail-kit): `SMTP_URL` (smtps://user:pass@host:465 or smtp://…:587) and the sender `MAIL_FROM`.
+   * Preferred over `mailWebhookUrl` when both are set.
+   */
+  smtp: { url: string; from: string } | null;
   /** Optional HTTP relay for emails sent by the worker: POST { to, subject, text } as JSON. */
   mailWebhookUrl: string | null;
 }
@@ -65,6 +70,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (secrets.some((v) => v.length < 32)) throw new Error("Every JWT_SECRET needs at least 32 characters");
   const deviceBinding = (env.DEVICE_BINDING || "enforce") as Config["deviceBinding"];
   if (!["enforce", "flag", "off"].includes(deviceBinding)) throw new Error(`DEVICE_BINDING must be enforce, flag or off, got "${deviceBinding}"`);
+  const smtpUrl = env.SMTP_URL || null;
+  if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) throw new Error("SMTP_URL must start with smtp:// or smtps://");
+  if (smtpUrl && !env.MAIL_FROM && !dev) throw new Error('MAIL_FROM is required with SMTP_URL (e.g. "Maa Gayatri Path Lab <no-reply@your-domain>")');
   return {
     env: mode,
     host: env.HOST ?? "0.0.0.0",
@@ -88,6 +96,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     deviceBinding,
     jobs: { prefix: env.QUEUE_PREFIX || "mgpl", concurrency: Math.max(1, int(env.WORKER_CONCURRENCY, 4)), keepResultsMs: int(env.JOB_RESULT_TTL_MS, 3600_000) },
+    smtp: smtpUrl ? { url: smtpUrl, from: env.MAIL_FROM || "MGPL Diagnostics <no-reply@localhost.localdomain>" } : null,
     mailWebhookUrl: env.MAIL_WEBHOOK_URL || null,
   };
 }

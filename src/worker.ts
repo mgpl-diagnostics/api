@@ -9,7 +9,7 @@ if (!config.redisUrl) {
   console.error("[worker] REDIS_URL is required: the worker takes its jobs from Redis (BullMQ)");
   process.exit(1);
 }
-if (config.env === "production" && !config.mailWebhookUrl) console.warn("[worker] MAIL_WEBHOOK_URL is not set: password-reset links are not sent");
+if (config.env === "production" && !config.smtp && !config.mailWebhookUrl) console.warn("[worker] neither SMTP_URL nor MAIL_WEBHOOK_URL is set: password-reset links are not sent");
 const container = await createContainer({ config });
 const workers = startWorkers(container.jobDeps, { redisUrl: config.redisUrl, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs, concurrency: config.jobs.concurrency });
 console.log(`[worker] queues ${workers.workers.map((w) => w.name).join(", ")} on ${config.jobs.prefix}: (concurrency ${config.jobs.concurrency}, ${config.db.backend})`);
