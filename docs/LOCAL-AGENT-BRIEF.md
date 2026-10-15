@@ -13,8 +13,8 @@ flowchart TD
   A["1 · Protect the api repo"] --> B["2 · Run the Mongo tests locally"]
   B --> C["3 · Release client 1.1.0"]
   C --> D["4 · Publish finance-kit 1.0.0"]
-  D --> E{"5 · tally-kit name<br/>confirmed by owner?"}
-  E -- yes --> F["publish tally-kit"]
+  D --> E{"5 · ledger-kit name<br/>confirmed by owner?"}
+  E -- yes --> F["publish ledger-kit"]
   E -- no --> G["leave unpublished"]
   F & G --> H["6 · Package access for api's Actions"]
   H --> I["7 · Switch api CI to the registry"]
@@ -33,7 +33,7 @@ flowchart TD
 - Never commit real patient data, signatures, `.env` files or tokens.
 - **Ask the owner before changing any value marked "verify with CA"** (GST rates, TDS sections and
   rates, thresholds).
-- **Do not release tally-kit until the owner confirms its final package name** ("Tally" is a trademark).
+- **Do not release ledger-kit until the owner confirms its final package name** ("Tally" is a trademark).
 
 ## 1. Protect the api repo
 
@@ -85,16 +85,19 @@ git tag v1.0.0 && git push origin v1.0.0
 
 Done when: the publish workflow is green and the package is visible in the org's packages.
 
-## 5. tally-kit: name, then publish
+## 5. ledger-kit: name, then publish
 
-Ask the owner to confirm the final package name (tally-kit's AGENTS.md rule 7). Only then, tag
-`v0.1.0` (or the renamed package) and publish. If the name changes, update every `@mgpl-diagnostics/tally-kit`
+> **Done 2026-10-15.** The owner chose **ledger-kit** (formerly tally-kit). The repo was renamed and
+> `@mgpl-diagnostics/ledger-kit@0.1.0` published; finance-kit 1.0.0 and the api depend on it.
+
+Ask the owner to confirm the final package name (ledger-kit's AGENTS.md rule 7). Only then, tag
+`v0.1.0` (or the renamed package) and publish. If the name changes, update every `@mgpl-diagnostics/ledger-kit`
 import and dependency (finance-kit, api) in one coordinated set of PRs.
 
 ## 6. Give the api repo access to the packages
 
 For each package (auth-kit, catalog-kit, db-kit, report-kit, invoice-kit, client, finance-kit,
-tally-kit): GitHub → org → Packages → the package → Package settings → **Manage Actions access** → add
+ledger-kit): GitHub → org → Packages → the package → Package settings → **Manage Actions access** → add
 `mgpl-diagnostics/api` with **Read**. (Alternatively make the packages public.)
 
 Done when: a workflow in api can `npm install` them with `GITHUB_TOKEN`.
@@ -128,9 +131,9 @@ db-kit still carries `src/graphql/` and the `./graphql` export (see db-kit
 1. db-kit PR: delete `src/graphql/`, the `./graphql` export and entry, its tests and graphql peer
    dependencies; update README / AGENTS.md / llms; mark the handoff doc "done (moved to mgpl-diagnostics/api)";
    version `2.0.0`.
-2. Before tagging, widen the peer ranges in **finance-kit** and **tally-kit** to
+2. Before tagging, widen the peer ranges in **finance-kit** and **ledger-kit** to
    `"@mgpl-diagnostics/db-kit": "^1.1.0 || ^2.0.0"` (PRs, with their tests green against 2.0.0).
-3. Tag db-kit `v2.0.0`; release finance-kit/tally-kit patch versions with the widened ranges.
+3. Tag db-kit `v2.0.0`; release finance-kit/ledger-kit patch versions with the widened ranges.
 4. Bump api to `^2.0.0` and run its tests on both backends.
 
 Done when: no repo imports `@mgpl-diagnostics/db-kit/graphql` (`gh search code "db-kit/graphql" --owner mgpl-diagnostics`).
@@ -192,7 +195,7 @@ Post one message with:
 2 tests on Mongo ......... done (N passed) / failing: …
 3 client v1.1.0 .......... done / …
 4 finance-kit v1.0.0 ..... done / …
-5 tally-kit name ......... confirmed "<name>" + published / waiting on owner
+5 ledger-kit name ......... confirmed "<name>" + published / waiting on owner
 6 package access ......... done / …
 7 api CI on registry ..... PR <link>, green / …
 8 db-kit 2.0.0 ........... PRs <links> / not started

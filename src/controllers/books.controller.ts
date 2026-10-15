@@ -8,7 +8,7 @@ const BUCKET = { "0-30": "D0_30", "31-60": "D31_60", "61-90": "D61_90", "90+": "
 
 type Range = { from: Date; to: Date; branchId?: string | null };
 
-/** The books (tally-kit). Reads need accounts:read, manual vouchers accounts:post, setup accounts:manage. */
+/** The books (ledger-kit). Reads need accounts:read, manual vouchers accounts:post, setup accounts:manage. */
 export const booksController = withErrorCodes({
   Query: {
     accountGroups: (_: unknown, __: unknown, ctx: Ctx) => ctx.services.books.groups(authorize(ctx, "accounts:read")),

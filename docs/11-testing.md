@@ -49,15 +49,15 @@ DEBUG=1 TEST_BACKENDS=pg npm test   # print resolver errors
 MONGOMS_SYSTEM_BINARY=/usr/bin/mongod npm test   # behind a proxy that blocks the MongoDB download
 ```
 
-CI (`.github/workflows/ci.yml`, job id `ci`, required on `main`) runs `npm run kits`, typecheck, the tests
+CI (`.github/workflows/ci.yml`, job id `ci`, required on `main`) runs `npm ci` (kits from GitHub Packages, `packages: read`), typecheck, the tests
 on both backends, the build, and checks that `schema.graphql`, `docs/04-api-reference.md` and
 `llms-full.txt` are current.
 
 ## The client contract
 
-`kits.json` pins `@mgpl-diagnostics/client`. The `[static]` checks validate every GraphQL operation the
+`package.json` pins `@mgpl-diagnostics/client` (a devDependency; `kits.json` for unreleased builds). The `[static]` checks validate every GraphQL operation the
 client sends (141) against `buildSchema()` and check that each query and mutation has one, so a renamed
-or new field fails here before it reaches an app. Change the client first, then bump its ref.
+or new field fails here before it reaches an app. Change the client first, release it, then bump its version here.
 
 ## Adding a test
 

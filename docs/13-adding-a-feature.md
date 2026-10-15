@@ -18,7 +18,7 @@ flowchart LR
 |---|---|
 | A new table, column or repository method | **db-kit** PR (both `mongo/` and `pg/`, contract tests) |
 | A domain rule (GST, settlements, credit limits) | **finance-kit** |
-| Posting or books reports | **tally-kit** |
+| Posting or books reports | **ledger-kit** |
 | A permission | **auth-kit** `PERMISSIONS` + the right `SYSTEM_ROLES` |
 | A test, range or price | **catalog-kit** `data/catalog.json` |
 | A print layout | **report-kit** / **invoice-kit** |
