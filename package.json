@@ -25,13 +25,13 @@
     "@graphql-tools/schema": "^10.1.4",
     "@mgpl-diagnostics/auth-kit": "^1.2.0",
     "@mgpl-diagnostics/catalog-kit": "^1.0.0",
-    "@mgpl-diagnostics/db-kit": "^1.1.0",
+    "@mgpl-diagnostics/db-kit": "^2.0.0",
     "@mgpl-diagnostics/finance-kit": "^1.0.0",
     "@mgpl-diagnostics/invoice-kit": "^2.0.0",
+    "@mgpl-diagnostics/ledger-kit": "^0.1.0",
     "@mgpl-diagnostics/mail-kit": "^0.1.0",
     "@mgpl-diagnostics/report-kit": "^2.0.0",
     "@mgpl-diagnostics/security-kit": "^0.2.0",
-    "@mgpl-diagnostics/tally-kit": "^0.1.0",
     "bullmq": "^5.81.5",
     "fastify": "^5.12.7",
     "graphql": "^16.14.0",
@@ -45,6 +45,7 @@
     "sequelize": "^6.37.8"
   },
   "devDependencies": {
+    "@mgpl-diagnostics/client": "^1.2.0",
     "@types/node": "^22.20.5",
     "embedded-postgres": "^18.4.0-beta.17",
     "ioredis-mock": "^8.13.1",

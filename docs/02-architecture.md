@@ -26,7 +26,7 @@ flowchart TB
     K2["db-kit"]
     K3["catalog-kit"]
     K4["report-kit · invoice-kit"]
-    K5["tally-kit · finance-kit"]
+    K5["ledger-kit · finance-kit"]
   end
   DB[("PostgreSQL / MongoDB")]
   RD[("Redis (optional)")]
@@ -140,7 +140,7 @@ flowchart LR
   API --> INV["invoice-kit"]
   API --> REP["report-kit"]
   API --> FIN["finance-kit"]
-  API --> TAL["tally-kit"]
+  API --> TAL["ledger-kit"]
   INV --> REP
   FIN --> TAL
   FIN --> DB
@@ -152,7 +152,7 @@ flowchart LR
 - db-kit's repositories satisfy auth-kit's store interfaces (users, orgs, roles, audit), so auth-kit reads
   and writes users through db-kit (`container.ts` passes `db.rawRepos`).
 - db-kit posts billing to the books through a `PostingHook`. The API sets it to finance-kit's
-  `financePosting`, which posts through tally-kit with GST split by place of supply.
+  `financePosting`, which posts through ledger-kit with GST split by place of supply.
 - `src/graphql` in db-kit is an older, partial GraphQL layer. This API replaces it; db-kit will remove
   it in a major version ([LOCAL-AGENT-BRIEF.md](LOCAL-AGENT-BRIEF.md)).
 

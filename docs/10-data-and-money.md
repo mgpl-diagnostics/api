@@ -6,7 +6,7 @@
 - The catalog's `mrp` and invoice-kit's print/price-list amounts are **rupees**; the API converts at the
   boundary (`pricePaise = mrp × 100`).
 - Rounding is explicit: bill discounts by largest remainder, GST per line, round-off to the rupee.
-- Every voucher balances (debits = credits), checked by tally-kit before it is written.
+- Every voucher balances (debits = credits), checked by ledger-kit before it is written.
 - Print shows `Rs.` (the report font has no `₹` glyph).
 
 ## Dates

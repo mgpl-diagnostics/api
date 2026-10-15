@@ -2,7 +2,7 @@ import { NotFoundError, type Id, type Repositories, type VoucherEntry, type Vouc
 import { seedFinanceLedgers } from "@mgpl-diagnostics/finance-kit";
 import {
   balanceSheet, cancelVoucher, cashBook, dayBook, gstSummary, ledgerBalance, ledgerStatement, outstandingReceivables, postVoucher, profitAndLoss, trialBalance,
-} from "@mgpl-diagnostics/tally-kit";
+} from "@mgpl-diagnostics/ledger-kit";
 import type { Actor } from "../graphql/context";
 import { mustOwn } from "./util";
 
@@ -15,7 +15,7 @@ export interface PostVoucherInput {
 }
 
 /**
- * The books, through tally-kit (our accounting engine): chart of accounts, ledgers, manual vouchers
+ * The books, through ledger-kit (our accounting engine): chart of accounts, ledgers, manual vouchers
  * and the books reports. Automatic posting of invoices and payments happens inside db-kit's workflows
  * through finance-kit's posting hook (set in the container).
  */
@@ -62,7 +62,7 @@ export class BooksService {
     return cancelVoucher(this.repos, id, actor.userId);
   }
 
-  // ---------------------------------------------------------------- reports (tally-kit)
+  // ---------------------------------------------------------------- reports (ledger-kit)
 
   balance(orgId: Id, ledgerId: Id, q: { asOf?: Date | null; branchId?: Id | null }) {
     return ledgerBalance(this.repos, { orgId, ledgerId, asOf: q.asOf ?? undefined, branchId: q.branchId ?? undefined });

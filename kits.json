@@ -1,13 +1,13 @@
 {
-  "$comment": "Kit sources for `npm run kits` (CI and local builds until every kit is on GitHub Packages with Actions access for this repo). Order = build order. `ref` is a tag or commit on github.com/mgpl-diagnostics/<name>.",
+  "$comment": "Kit sources for `npm run kits`: builds each kit from github.com/mgpl-diagnostics/<name> at `ref` (a tag or commit), for testing unreleased kit branches locally (KITS_SRC for local checkouts). CI and normal installs use the published packages on GitHub Packages.",
   "kits": [
     {
       "name": "security-kit",
-      "ref": "aee153f38cc31b9ebe07abd9f634333678eb4edf"
+      "ref": "v0.2.0"
     },
     {
       "name": "mail-kit",
-      "ref": "3e217f56ae36fab59412dcb005862f41ad7120d4"
+      "ref": "v0.1.0"
     },
     {
       "name": "catalog-kit",
@@ -15,23 +15,23 @@
     },
     {
       "name": "auth-kit",
-      "ref": "1ed4fdbae61c785fb1fd6188dc5298b79dc44d94"
+      "ref": "v1.2.0"
     },
     {
       "name": "db-kit",
-      "ref": "v1.1.0"
+      "ref": "v2.0.0"
     },
     {
       "name": "report-kit",
       "ref": "v2.0.0"
     },
     {
-      "name": "tally-kit",
-      "ref": "0629673c04e999ff4a3998d1fda8a9573ca3f68a"
+      "name": "ledger-kit",
+      "ref": "v0.1.0"
     },
     {
       "name": "client",
-      "ref": "8961047f49d607673e0ad72509c4524b104f340c"
+      "ref": "v1.2.0"
     },
     {
       "name": "invoice-kit",
@@ -39,7 +39,7 @@
     },
     {
       "name": "finance-kit",
-      "ref": "dbaafec32fcc2f9c34c1c8878f3fb2e14d2d6356"
+      "ref": "v1.0.0"
     }
   ]
 }

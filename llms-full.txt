@@ -120,7 +120,7 @@ cash and bank, documents. TypeScript, GraphQL Yoga on Fastify, PostgreSQL or Mon
 ```mermaid
 flowchart LR
   APP["Apps<br/>@mgpl-diagnostics/client"] -- "POST /graphql" --> API["api<br/>controllers → services"]
-  API --> K["auth-kit · db-kit · catalog-kit<br/>report-kit · invoice-kit · tally-kit · finance-kit"]
+  API --> K["auth-kit · db-kit · catalog-kit<br/>report-kit · invoice-kit · ledger-kit · finance-kit"]
   K --> DB[("PostgreSQL / MongoDB")]
   K -.-> R[("Redis")]
   R -. "BullMQ jobs" .-> W["worker<br/>emails · documents"]
@@ -132,7 +132,7 @@ flowchart LR
 - **One endpoint.** 140 queries and mutations; reports and invoices come back as base64 PDFs or HTML
   inside the response, CSV exports as text. No other routes except `GET /health`.
 - **The kits as internal libraries.** auth-kit sessions and roles, db-kit storage and workflows,
-  catalog-kit prices and reference ranges, report-kit and invoice-kit rendering, tally-kit books,
+  catalog-kit prices and reference ranges, report-kit and invoice-kit rendering, ledger-kit books,
   finance-kit GST and finance. See [docs/01-overview.md](docs/01-overview.md).
 - **Access and refresh tokens.** Short-lived JWTs plus single-use, rotating refresh tokens bound to the
   device; logout and disabling still apply at once. See [docs/06](docs/06-auth-and-permissions.md).
@@ -147,7 +147,7 @@ flowchart LR
 ## Quick start
 
 ```bash
-npm run kits                       # build + install the kits (see docs/03-getting-started.md)
+npm ci                             # kits from GitHub Packages; NODE_AUTH_TOKEN with read:packages (docs/03)
 cp .env.example .env               # DATABASE_URL, …
 SEED_ORG_NAME=… SEED_ORG_CODE=MGPL SEED_BRANCH_CODE=ARG01 SEED_BRANCH_NAME=Arang SEED_BRANCH_STATE=22 \
 SEED_OWNER_NAME=… SEED_OWNER_EMAIL=… SEED_OWNER_PASSWORD=… npm run seed
@@ -194,10 +194,10 @@ npm run llms                # llms-full.txt
 | [client](https://github.com/mgpl-diagnostics/client) | frontend SDK (zero dependencies) |
 | [auth-kit](https://github.com/mgpl-diagnostics/auth-kit) · [db-kit](https://github.com/mgpl-diagnostics/db-kit) · [catalog-kit](https://github.com/mgpl-diagnostics/catalog-kit) | auth, data, test catalog |
 | [report-kit](https://github.com/mgpl-diagnostics/report-kit) · [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | report and invoice rendering |
-| [tally-kit](https://github.com/mgpl-diagnostics/tally-kit) · [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | books, GST and finance |
+| [ledger-kit](https://github.com/mgpl-diagnostics/ledger-kit) · [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | books, GST and finance |
 | [report-studio](https://github.com/mgpl-diagnostics/report-studio) | Next.js reference app |
 
-<sub>© MGPL Diagnostics (Maa Gayatri Path Lab). All rights reserved; see [LICENSE](LICENSE). tally-kit is our own software, not affiliated with Tally Solutions.</sub>
+<sub>© MGPL Diagnostics (Maa Gayatri Path Lab). All rights reserved; see [LICENSE](LICENSE). ledger-kit is our own software, not affiliated with Tally Solutions.</sub>
 
 
 ---
@@ -227,7 +227,7 @@ scripts/               kits.mjs (build kits from source), seed.ts, print-schema.
 test/run.ts            end-to-end over HTTP on PostgreSQL + MongoDB, plus docs/examples validation
 docs/                  A-to-Z docs (Mermaid), examples/*.graphql, LOCAL-AGENT-BRIEF.md
 schema.graphql         printed schema (generated)
-kits.json              kit refs for `npm run kits`
+kits.json              kit refs for `npm run kits` (building unreleased kit branches from source)
 ```
 
 ## Rules
@@ -236,7 +236,7 @@ kits.json              kit refs for `npm run kits`
    travel as `Document { base64 | html }`, exports as `CsvFile`.
 2. **Layers.** Schema → controller → service → kit. Controllers check permissions and map; services hold
    the logic and never import GraphQL; storage changes go to db-kit, finance rules to finance-kit,
-   posting to tally-kit, permissions to auth-kit, catalog data to catalog-kit, layouts to report-kit /
+   posting to ledger-kit, permissions to auth-kit, catalog data to catalog-kit, layouts to report-kit /
    invoice-kit, mail designs to mail-kit (written in its mail design language, never HTML).
 3. **Tenant isolation.** No argument carries an `orgId` or `actorId`. They come from the session
    (`actorOf`). Every id is checked against the organisation (`mustOwn`, `owned`, `scopedFind`).
@@ -263,7 +263,7 @@ kits.json              kit refs for `npm run kits`
 ## Commands
 
 ```bash
-npm run kits                       # once, and after changing kits.json
+npm ci                             # kits from GitHub Packages (NODE_AUTH_TOKEN, read:packages)
 npm run typecheck && npm test && npm run build
 npm run schema && npm run docs:reference && npm run llms
 ```
@@ -318,7 +318,7 @@ service layer.
 | [catalog-kit](https://github.com/mgpl-diagnostics/catalog-kit) | The test catalog: names, codes, prices, units, reference ranges, search |
 | [report-kit](https://github.com/mgpl-diagnostics/report-kit) | Report PDFs and HTML (Navy Sidebar and classic designs) |
 | [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | Invoice PDFs and HTML, invoice arithmetic |
-| [tally-kit](https://github.com/mgpl-diagnostics/tally-kit) | Our own double-entry engine: ledgers, vouchers, books reports |
+| [ledger-kit](https://github.com/mgpl-diagnostics/ledger-kit) | Our own double-entry engine: ledgers, vouchers, books reports |
 | [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | GST, GSTR-1/3B data, receivables, settlements, cash and bank, lock dates, exports |
 | [security-kit](https://github.com/mgpl-diagnostics/security-kit) | Security headers on every response, the client IP behind proxies (`TRUST_PROXY`); in the client, the device signals |
 | [client](https://github.com/mgpl-diagnostics/client) | Not used by the API; the frontend SDK that calls it |
@@ -340,7 +340,7 @@ service layer.
   catalog needs a staff session.
 - Not tax advice. GST rates, TDS and thresholds are configuration that the lab's CA must confirm
   (`verifyWithCA` lists them).
-- Not integrated with Tally software. tally-kit is our own engine with Tally-like concepts.
+- Not integrated with Tally software. ledger-kit is our own engine with Tally-like concepts.
 
 
 ---
@@ -375,7 +375,7 @@ flowchart TB
     K2["db-kit"]
     K3["catalog-kit"]
     K4["report-kit · invoice-kit"]
-    K5["tally-kit · finance-kit"]
+    K5["ledger-kit · finance-kit"]
   end
   DB[("PostgreSQL / MongoDB")]
   RD[("Redis (optional)")]
@@ -489,7 +489,7 @@ flowchart LR
   API --> INV["invoice-kit"]
   API --> REP["report-kit"]
   API --> FIN["finance-kit"]
-  API --> TAL["tally-kit"]
+  API --> TAL["ledger-kit"]
   INV --> REP
   FIN --> TAL
   FIN --> DB
@@ -501,7 +501,7 @@ flowchart LR
 - db-kit's repositories satisfy auth-kit's store interfaces (users, orgs, roles, audit), so auth-kit reads
   and writes users through db-kit (`container.ts` passes `db.rawRepos`).
 - db-kit posts billing to the books through a `PostingHook`. The API sets it to finance-kit's
-  `financePosting`, which posts through tally-kit with GST split by place of supply.
+  `financePosting`, which posts through ledger-kit with GST split by place of supply.
 - `src/graphql` in db-kit is an older, partial GraphQL layer. This API replaces it; db-kit will remove
   it in a major version ([LOCAL-AGENT-BRIEF.md](LOCAL-AGENT-BRIEF.md)).
 
@@ -544,18 +544,19 @@ builds it from the environment. `close()` closes what the container opened.
 - Node.js ≥ 20 (CI uses 22)
 - PostgreSQL ≥ 14, **or** MongoDB ≥ 6 running as a replica set (transactions need one)
 - Redis (optional; needed when you run more than one server)
-- Git (to build the kits from source until they are all on the registry)
+- A GitHub token with `read:packages` (the kits are on GitHub Packages)
 
 ## 1. Install
 
 ```bash
 git clone https://github.com/mgpl-diagnostics/api && cd api
-npm run kits          # builds the 7 kits + client from source at the refs in kits.json, then npm install
+export NODE_AUTH_TOKEN=<a GitHub token with read:packages>   # .npmrc points @mgpl-diagnostics at GitHub Packages
+npm ci                # installs the kits at the versions pinned in package-lock.json
 ```
 
-`npm run kits` exists because not every kit is published to GitHub Packages yet. Once they are, a plain
-`npm install` (with a token that has `read:packages`) is enough; see [LOCAL-AGENT-BRIEF.md](LOCAL-AGENT-BRIEF.md).
-To build from local checkouts instead of GitHub, set `KITS_SRC=/path/to/folder-with-the-kits`.
+Every kit is published to GitHub Packages, so this is all you need. To test **unreleased** kit branches,
+`npm run kits` builds each kit from source at the refs in `kits.json` (or from local checkouts with
+`KITS_SRC=/path/to/folder-with-the-kits`) and installs those builds instead.
 
 ## 2. Configure
 
@@ -1139,14 +1140,14 @@ stateDiagram-v2
 - Arithmetic (db-kit, integer paise): line gross → line discount → bill discount shared by largest
   remainder → GST → round-off to the rupee.
 - Every issue, payment, refund, credit note and cancel posts a voucher **in the same transaction**
-  (`financePosting` → tally-kit). A failed posting rolls the whole operation back.
+  (`financePosting` → ledger-kit). A failed posting rolls the whole operation back.
 
 ```mermaid
 sequenceDiagram
   participant API as billing service
   participant DB as db-kit issueInvoice
   participant H as financePosting (hook)
-  participant T as tally-kit postVoucher
+  participant T as ledger-kit postVoucher
   API->>DB: repos.transaction(tx => …)
   DB->>DB: compute totals, number MGPL/ARG01/2026-27/000123
   DB->>H: invoiceIssued(tx, invoice)
@@ -1394,7 +1395,7 @@ flowchart LR
 - The catalog's `mrp` and invoice-kit's print/price-list amounts are **rupees**; the API converts at the
   boundary (`pricePaise = mrp × 100`).
 - Rounding is explicit: bill discounts by largest remainder, GST per line, round-off to the rupee.
-- Every voucher balances (debits = credits), checked by tally-kit before it is written.
+- Every voucher balances (debits = credits), checked by ledger-kit before it is written.
 - Print shows `Rs.` (the report font has no `₹` glyph).
 
 ## Dates
@@ -1511,15 +1512,15 @@ DEBUG=1 TEST_BACKENDS=pg npm test   # print resolver errors
 MONGOMS_SYSTEM_BINARY=/usr/bin/mongod npm test   # behind a proxy that blocks the MongoDB download
 ```
 
-CI (`.github/workflows/ci.yml`, job id `ci`, required on `main`) runs `npm run kits`, typecheck, the tests
+CI (`.github/workflows/ci.yml`, job id `ci`, required on `main`) runs `npm ci` (kits from GitHub Packages, `packages: read`), typecheck, the tests
 on both backends, the build, and checks that `schema.graphql`, `docs/04-api-reference.md` and
 `llms-full.txt` are current.
 
 ## The client contract
 
-`kits.json` pins `@mgpl-diagnostics/client`. The `[static]` checks validate every GraphQL operation the
+`package.json` pins `@mgpl-diagnostics/client` (a devDependency; `kits.json` for unreleased builds). The `[static]` checks validate every GraphQL operation the
 client sends (141) against `buildSchema()` and check that each query and mutation has one, so a renamed
-or new field fails here before it reaches an app. Change the client first, then bump its ref.
+or new field fails here before it reaches an app. Change the client first, release it, then bump its version here.
 
 ## Adding a test
 
@@ -1559,7 +1560,7 @@ flowchart LR
 ## Build and run
 
 ```bash
-npm run kits          # or `npm ci` once every kit is on the registry
+npm ci                # kits from GitHub Packages (NODE_AUTH_TOKEN with read:packages)
 npm run build         # dist/main.js, dist/worker.js
 NODE_ENV=production node dist/main.js     # API
 NODE_ENV=production node dist/worker.js   # worker (with REDIS_URL)
@@ -1624,7 +1625,7 @@ await (await buildServer(container)).listen({ port: container.config.port, host:
 ## Upgrading kits
 
 Bump the version in `package.json` (and the ref in `kits.json` while CI builds from source), run
-`npm test` on both backends, regenerate `schema.graphql` if types changed, deploy. tally-kit changes of
+`npm test` on both backends, regenerate `schema.graphql` if types changed, deploy. ledger-kit changes of
 behaviour are versioned decisions; read its changelog.
 
 
@@ -1652,7 +1653,7 @@ flowchart LR
 |---|---|
 | A new table, column or repository method | **db-kit** PR (both `mongo/` and `pg/`, contract tests) |
 | A domain rule (GST, settlements, credit limits) | **finance-kit** |
-| Posting or books reports | **tally-kit** |
+| Posting or books reports | **ledger-kit** |
 | A permission | **auth-kit** `PERMISSIONS` + the right `SYSTEM_ROLES` |
 | A test, range or price | **catalog-kit** `data/catalog.json` |
 | A print layout | **report-kit** / **invoice-kit** |
@@ -1966,8 +1967,8 @@ flowchart TD
   A["1 · Protect the api repo"] --> B["2 · Run the Mongo tests locally"]
   B --> C["3 · Release client 1.1.0"]
   C --> D["4 · Publish finance-kit 1.0.0"]
-  D --> E{"5 · tally-kit name<br/>confirmed by owner?"}
-  E -- yes --> F["publish tally-kit"]
+  D --> E{"5 · ledger-kit name<br/>confirmed by owner?"}
+  E -- yes --> F["publish ledger-kit"]
   E -- no --> G["leave unpublished"]
   F & G --> H["6 · Package access for api's Actions"]
   H --> I["7 · Switch api CI to the registry"]
@@ -1986,7 +1987,7 @@ flowchart TD
 - Never commit real patient data, signatures, `.env` files or tokens.
 - **Ask the owner before changing any value marked "verify with CA"** (GST rates, TDS sections and
   rates, thresholds).
-- **Do not release tally-kit until the owner confirms its final package name** ("Tally" is a trademark).
+- **Do not release ledger-kit until the owner confirms its final package name** ("Tally" is a trademark).
 
 ## 1. Protect the api repo
 
@@ -2038,16 +2039,19 @@ git tag v1.0.0 && git push origin v1.0.0
 
 Done when: the publish workflow is green and the package is visible in the org's packages.
 
-## 5. tally-kit: name, then publish
+## 5. ledger-kit: name, then publish
 
-Ask the owner to confirm the final package name (tally-kit's AGENTS.md rule 7). Only then, tag
-`v0.1.0` (or the renamed package) and publish. If the name changes, update every `@mgpl-diagnostics/tally-kit`
+> **Done 2026-10-15.** The owner chose **ledger-kit** (formerly tally-kit). The repo was renamed and
+> `@mgpl-diagnostics/ledger-kit@0.1.0` published; finance-kit 1.0.0 and the api depend on it.
+
+Ask the owner to confirm the final package name (ledger-kit's AGENTS.md rule 7). Only then, tag
+`v0.1.0` (or the renamed package) and publish. If the name changes, update every `@mgpl-diagnostics/ledger-kit`
 import and dependency (finance-kit, api) in one coordinated set of PRs.
 
 ## 6. Give the api repo access to the packages
 
 For each package (auth-kit, catalog-kit, db-kit, report-kit, invoice-kit, client, finance-kit,
-tally-kit): GitHub → org → Packages → the package → Package settings → **Manage Actions access** → add
+ledger-kit): GitHub → org → Packages → the package → Package settings → **Manage Actions access** → add
 `mgpl-diagnostics/api` with **Read**. (Alternatively make the packages public.)
 
 Done when: a workflow in api can `npm install` them with `GITHUB_TOKEN`.
@@ -2081,9 +2085,9 @@ db-kit still carries `src/graphql/` and the `./graphql` export (see db-kit
 1. db-kit PR: delete `src/graphql/`, the `./graphql` export and entry, its tests and graphql peer
    dependencies; update README / AGENTS.md / llms; mark the handoff doc "done (moved to mgpl-diagnostics/api)";
    version `2.0.0`.
-2. Before tagging, widen the peer ranges in **finance-kit** and **tally-kit** to
+2. Before tagging, widen the peer ranges in **finance-kit** and **ledger-kit** to
    `"@mgpl-diagnostics/db-kit": "^1.1.0 || ^2.0.0"` (PRs, with their tests green against 2.0.0).
-3. Tag db-kit `v2.0.0`; release finance-kit/tally-kit patch versions with the widened ranges.
+3. Tag db-kit `v2.0.0`; release finance-kit/ledger-kit patch versions with the widened ranges.
 4. Bump api to `^2.0.0` and run its tests on both backends.
 
 Done when: no repo imports `@mgpl-diagnostics/db-kit/graphql` (`gh search code "db-kit/graphql" --owner mgpl-diagnostics`).
@@ -2146,7 +2150,7 @@ Post one message with:
 2 tests on Mongo ......... done (N passed) / failing: …
 3 client v1.1.0 .......... done / …
 4 finance-kit v1.0.0 ..... done / …
-5 tally-kit name ......... confirmed "<name>" + published / waiting on owner
+5 ledger-kit name ......... confirmed "<name>" + published / waiting on owner
 6 package access ......... done / …
 7 api CI on registry ..... PR <link>, green / …
 8 db-kit 2.0.0 ........... PRs <links> / not started
@@ -2210,15 +2214,15 @@ flowchart TD
 
 ```json
 {
-  "$comment": "Kit sources for `npm run kits` (CI and local builds until every kit is on GitHub Packages with Actions access for this repo). Order = build order. `ref` is a tag or commit on github.com/mgpl-diagnostics/<name>.",
+  "$comment": "Kit sources for `npm run kits`: builds each kit from github.com/mgpl-diagnostics/<name> at `ref` (a tag or commit), for testing unreleased kit branches locally (KITS_SRC for local checkouts). CI and normal installs use the published packages on GitHub Packages.",
   "kits": [
     {
       "name": "security-kit",
-      "ref": "aee153f38cc31b9ebe07abd9f634333678eb4edf"
+      "ref": "v0.2.0"
     },
     {
       "name": "mail-kit",
-      "ref": "3e217f56ae36fab59412dcb005862f41ad7120d4"
+      "ref": "v0.1.0"
     },
     {
       "name": "catalog-kit",
@@ -2226,23 +2230,23 @@ flowchart TD
     },
     {
       "name": "auth-kit",
-      "ref": "1ed4fdbae61c785fb1fd6188dc5298b79dc44d94"
+      "ref": "v1.2.0"
     },
     {
       "name": "db-kit",
-      "ref": "v1.1.0"
+      "ref": "v2.0.0"
     },
     {
       "name": "report-kit",
       "ref": "v2.0.0"
     },
     {
-      "name": "tally-kit",
-      "ref": "0629673c04e999ff4a3998d1fda8a9573ca3f68a"
+      "name": "ledger-kit",
+      "ref": "v0.1.0"
     },
     {
       "name": "client",
-      "ref": "8961047f49d607673e0ad72509c4524b104f340c"
+      "ref": "v1.2.0"
     },
     {
       "name": "invoice-kit",
@@ -2250,7 +2254,7 @@ flowchart TD
     },
     {
       "name": "finance-kit",
-      "ref": "dbaafec32fcc2f9c34c1c8878f3fb2e14d2d6356"
+      "ref": "v1.0.0"
     }
   ]
 }
@@ -2330,13 +2334,13 @@ Key facts for agents:
     "@graphql-tools/schema": "^10.1.4",
     "@mgpl-diagnostics/auth-kit": "^1.2.0",
     "@mgpl-diagnostics/catalog-kit": "^1.0.0",
-    "@mgpl-diagnostics/db-kit": "^1.1.0",
+    "@mgpl-diagnostics/db-kit": "^2.0.0",
     "@mgpl-diagnostics/finance-kit": "^1.0.0",
     "@mgpl-diagnostics/invoice-kit": "^2.0.0",
+    "@mgpl-diagnostics/ledger-kit": "^0.1.0",
     "@mgpl-diagnostics/mail-kit": "^0.1.0",
     "@mgpl-diagnostics/report-kit": "^2.0.0",
     "@mgpl-diagnostics/security-kit": "^0.2.0",
-    "@mgpl-diagnostics/tally-kit": "^0.1.0",
     "bullmq": "^5.81.5",
     "fastify": "^5.12.7",
     "graphql": "^16.14.0",
@@ -2350,6 +2354,7 @@ Key facts for agents:
     "sequelize": "^6.37.8"
   },
   "devDependencies": {
+    "@mgpl-diagnostics/client": "^1.2.0",
     "@types/node": "^22.20.5",
     "embedded-postgres": "^18.4.0-beta.17",
     "ioredis-mock": "^8.13.1",
@@ -4258,10 +4263,12 @@ type YearEndResult {
 // Writes docs/04-api-reference.md from the schema (operations, arguments, return types, descriptions)
 // and the controllers (the permission each resolver checks). Run `npm run docs:reference`; CI fails when it is stale.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { GraphQLObjectType, type GraphQLField } from "graphql";
 import { buildSchema, MODULES } from "../src/graphql/schema";
 
-const root = new URL("..", import.meta.url).pathname;
+// fileURLToPath, not .pathname: on Windows .pathname gives "/E:/…" with %20 for spaces
+const root = fileURLToPath(new URL("..", import.meta.url));
 const schema = buildSchema();
 
 /** field → permissions found in its resolver body, per root type. */
@@ -4698,7 +4705,7 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
       backend: config.db.backend,
       ...(config.db.backend === "pg" ? { pg: { url: config.db.url } } : { mongo: { uri: config.db.url } }),
       redis: config.redisUrl ?? undefined,
-      // invoices and payments post to the books through finance-kit → tally-kit
+      // invoices and payments post to the books through finance-kit → ledger-kit
       posting: financePosting,
     } as Parameters<typeof createDb>[0]));
 
@@ -4946,7 +4953,7 @@ const BUCKET = { "0-30": "D0_30", "31-60": "D31_60", "61-90": "D61_90", "90+": "
 
 type Range = { from: Date; to: Date; branchId?: string | null };
 
-/** The books (tally-kit). Reads need accounts:read, manual vouchers accounts:post, setup accounts:manage. */
+/** The books (ledger-kit). Reads need accounts:read, manual vouchers accounts:post, setup accounts:manage. */
 export const booksController = withErrorCodes({
   Query: {
     accountGroups: (_: unknown, __: unknown, ctx: Ctx) => ctx.services.books.groups(authorize(ctx, "accounts:read")),
@@ -6527,7 +6534,7 @@ export const billingTypeDefs = /* GraphQL */ `
 ## File: src/schema/books.graphql.ts
 
 ```ts
-/** The books (tally-kit, our accounting engine): chart of accounts, vouchers, reports. */
+/** The books (ledger-kit, our accounting engine): chart of accounts, vouchers, reports. */
 export const booksTypeDefs = /* GraphQL */ `
   enum AccountNature { assets liabilities income expenses }
   enum VoucherStatus { posted cancelled }
@@ -7783,7 +7790,7 @@ import { NotFoundError, type Id, type Repositories, type VoucherEntry, type Vouc
 import { seedFinanceLedgers } from "@mgpl-diagnostics/finance-kit";
 import {
   balanceSheet, cancelVoucher, cashBook, dayBook, gstSummary, ledgerBalance, ledgerStatement, outstandingReceivables, postVoucher, profitAndLoss, trialBalance,
-} from "@mgpl-diagnostics/tally-kit";
+} from "@mgpl-diagnostics/ledger-kit";
 import type { Actor } from "../graphql/context";
 import { mustOwn } from "./util";
 
@@ -7796,7 +7803,7 @@ export interface PostVoucherInput {
 }
 
 /**
- * The books, through tally-kit (our accounting engine): chart of accounts, ledgers, manual vouchers
+ * The books, through ledger-kit (our accounting engine): chart of accounts, ledgers, manual vouchers
  * and the books reports. Automatic posting of invoices and payments happens inside db-kit's workflows
  * through finance-kit's posting hook (set in the container).
  */
@@ -7843,7 +7850,7 @@ export class BooksService {
     return cancelVoucher(this.repos, id, actor.userId);
   }
 
-  // ---------------------------------------------------------------- reports (tally-kit)
+  // ---------------------------------------------------------------- reports (ledger-kit)
 
   balance(orgId: Id, ledgerId: Id, q: { asOf?: Date | null; branchId?: Id | null }) {
     return ledgerBalance(this.repos, { orgId, ledgerId, asOf: q.asOf ?? undefined, branchId: q.branchId ?? undefined });
@@ -9079,7 +9086,7 @@ async function suite(db: Db, tag: string) {
   ok((await gql(null, "{ viewer { user { id } } }")).data?.viewer === null, `[${tag}] viewer is null without a token`);
 
   const chart = await gql(owner, "mutation { setupChartOfAccounts { name systemKey } }");
-  ok(chart.data?.setupChartOfAccounts.length > 10, `[${tag}] setupChartOfAccounts (tally-kit chart + finance-kit ledgers): ${chart.data?.setupChartOfAccounts.length} ledgers`);
+  ok(chart.data?.setupChartOfAccounts.length > 10, `[${tag}] setupChartOfAccounts (ledger-kit chart + finance-kit ledgers): ${chart.data?.setupChartOfAccounts.length} ledgers`);
   await gql(otherOwner, "mutation { setupChartOfAccounts { id } }");
   const branchB = (await gql(owner, 'mutation { createBranch(input: { code: "b01", name: "Branch B", kind: collection_center, stateCode: "22" }) { id code } }')).data?.createBranch;
   ok(branchB?.code === "B01", `[${tag}] createBranch (code upper-cased)`);
@@ -9123,7 +9130,7 @@ async function suite(db: Db, tag: string) {
   const html = await gql(owner, 'query($b: ID!) { bookingReportDocument(bookingId: $b, format: html, variant: non_header) { html } }', { b: booking.booking.id });
   ok(/Asha Patel/.test(html.data?.bookingReportDocument.html ?? "") && /10\.2/.test(html.data.bookingReportDocument.html), `[${tag}] bookingReportDocument html (non-header) carries the patient and results`);
 
-  // ---------------------------------------------------------------- billing + automatic posting (finance-kit → tally-kit)
+  // ---------------------------------------------------------------- billing + automatic posting (finance-kit → ledger-kit)
   const inv = await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id invoiceNo status totalPaise duePaise items { name ratePaise } } }", {
     i: { branchId: a.branch.id, patientId, bookingId: booking.booking.id, items: [{ code: "CBC" }, { code: "HOME", name: "Home collection", category: "service", ratePaise: 10000 }], payments: [{ amountPaise: 20000, mode: "cash" }] },
   });
@@ -9133,7 +9140,7 @@ async function suite(db: Db, tag: string) {
   const paid = await gql(owner, 'mutation($id: ID!) { recordPayment(invoiceId: $id, payment: { amountPaise: 29900, mode: upi, reference: "UPI9" }) { status payments { mode } vouchers { type entries { ledger { name } debitPaise creditPaise } } } }', { id: invoiceId });
   ok(paid.data?.recordPayment.status === "paid" && paid.data.recordPayment.vouchers.length === 3, `[${tag}] recordPayment → paid; sales + 2 receipt vouchers posted through finance-kit`);
   const tb = await gql(owner, "{ trialBalance { differencePaise totalDebitPaise } outstandingReceivables { totalDuePaise } }");
-  ok(tb.data?.trialBalance.differencePaise === 0 && tb.data.trialBalance.totalDebitPaise > 0 && tb.data.outstandingReceivables.totalDuePaise === 0, `[${tag}] trial balance balances (tally-kit); nothing outstanding`);
+  ok(tb.data?.trialBalance.differencePaise === 0 && tb.data.trialBalance.totalDebitPaise > 0 && tb.data.outstandingReceivables.totalDuePaise === 0, `[${tag}] trial balance balances (ledger-kit); nothing outstanding`);
   const invDoc = await gql(owner, "query($id: ID!) { invoiceDocument(invoiceId: $id) { base64 fileName } h: invoiceDocument(invoiceId: $id, format: html) { html } }", { id: invoiceId });
   ok(Buffer.from(invDoc.data?.invoiceDocument.base64 ?? "", "base64").subarray(0, 5).toString() === "%PDF-" && invDoc.data.h.html.includes(inv.data.issueInvoice.invoiceNo), `[${tag}] invoiceDocument: invoice-kit PDF + HTML of the stored invoice (totals match)`);
   const anyDoc = await gql(owner, '{ renderReport(request: { sample: "cbc" }, format: html) { html } invoiceTotals(request: { invoice: { invoiceNo: "T-1", patient: { name: "Kavita Sharma", age: 32, sex: "Female" }, items: ["cbc"] } }) reportTemplates { templates { id } } }');
@@ -9144,7 +9151,7 @@ async function suite(db: Db, tag: string) {
   const capital = (await db.rawRepos.ledgers.findBySystemKey(a.org.id, "capital"))!;
   ok(code(await gql(owner, "mutation($i: PostVoucherInput!) { postVoucher(input: $i) { id } }", { i: { branchId: a.branch.id, type: "journal", entries: [{ ledgerId: cash.id, debitPaise: 100 }, { ledgerId: capital.id, creditPaise: 50 }] } })) === "BAD_USER_INPUT", `[${tag}] unbalanced voucher → BAD_USER_INPUT`);
   const journal = await gql(owner, "mutation($i: PostVoucherInput!) { postVoucher(input: $i) { id voucherNo } }", { i: { branchId: a.branch.id, type: "journal", narration: "Capital", entries: [{ ledgerId: cash.id, debitPaise: 100000 }, { ledgerId: capital.id, creditPaise: 100000 }] } });
-  ok(/^JRN\//.test(journal.data?.postVoucher.voucherNo ?? ""), `[${tag}] postVoucher (tally-kit): ${journal.data?.postVoucher.voucherNo}`);
+  ok(/^JRN\//.test(journal.data?.postVoucher.voucherNo ?? ""), `[${tag}] postVoucher (ledger-kit): ${journal.data?.postVoucher.voucherNo}`);
   ok(code(await gql(otherOwner, "mutation($i: PostVoucherInput!) { postVoucher(input: $i) { id } }", { i: { branchId: other.branch.id, type: "journal", entries: [{ ledgerId: cash.id, debitPaise: 100 }, { ledgerId: capital.id, creditPaise: 100 }] } })) === "NOT_FOUND", `[${tag}] cannot post into another organisation's ledgers`);
   ok(code(await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, items: [{ name: "X", qty: 0, ratePaise: 100 }] } })) === "BAD_USER_INPUT", `[${tag}] qty 0 → BAD_USER_INPUT`);
 

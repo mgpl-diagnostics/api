@@ -26,7 +26,7 @@ flowchart LR
 ## Build and run
 
 ```bash
-npm run kits          # or `npm ci` once every kit is on the registry
+npm ci                # kits from GitHub Packages (NODE_AUTH_TOKEN with read:packages)
 npm run build         # dist/main.js, dist/worker.js
 NODE_ENV=production node dist/main.js     # API
 NODE_ENV=production node dist/worker.js   # worker (with REDIS_URL)
@@ -91,5 +91,5 @@ await (await buildServer(container)).listen({ port: container.config.port, host:
 ## Upgrading kits
 
 Bump the version in `package.json` (and the ref in `kits.json` while CI builds from source), run
-`npm test` on both backends, regenerate `schema.graphql` if types changed, deploy. tally-kit changes of
+`npm test` on both backends, regenerate `schema.graphql` if types changed, deploy. ledger-kit changes of
 behaviour are versioned decisions; read its changelog.

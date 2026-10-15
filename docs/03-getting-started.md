@@ -5,18 +5,19 @@
 - Node.js ≥ 20 (CI uses 22)
 - PostgreSQL ≥ 14, **or** MongoDB ≥ 6 running as a replica set (transactions need one)
 - Redis (optional; needed when you run more than one server)
-- Git (to build the kits from source until they are all on the registry)
+- A GitHub token with `read:packages` (the kits are on GitHub Packages)
 
 ## 1. Install
 
 ```bash
 git clone https://github.com/mgpl-diagnostics/api && cd api
-npm run kits          # builds the 7 kits + client from source at the refs in kits.json, then npm install
+export NODE_AUTH_TOKEN=<a GitHub token with read:packages>   # .npmrc points @mgpl-diagnostics at GitHub Packages
+npm ci                # installs the kits at the versions pinned in package-lock.json
 ```
 
-`npm run kits` exists because not every kit is published to GitHub Packages yet. Once they are, a plain
-`npm install` (with a token that has `read:packages`) is enough; see [LOCAL-AGENT-BRIEF.md](LOCAL-AGENT-BRIEF.md).
-To build from local checkouts instead of GitHub, set `KITS_SRC=/path/to/folder-with-the-kits`.
+Every kit is published to GitHub Packages, so this is all you need. To test **unreleased** kit branches,
+`npm run kits` builds each kit from source at the refs in `kits.json` (or from local checkouts with
+`KITS_SRC=/path/to/folder-with-the-kits`) and installs those builds instead.
 
 ## 2. Configure
 

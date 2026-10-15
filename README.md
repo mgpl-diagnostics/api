@@ -22,7 +22,7 @@ cash and bank, documents. TypeScript, GraphQL Yoga on Fastify, PostgreSQL or Mon
 ```mermaid
 flowchart LR
   APP["Apps<br/>@mgpl-diagnostics/client"] -- "POST /graphql" --> API["api<br/>controllers → services"]
-  API --> K["auth-kit · db-kit · catalog-kit<br/>report-kit · invoice-kit · tally-kit · finance-kit"]
+  API --> K["auth-kit · db-kit · catalog-kit<br/>report-kit · invoice-kit · ledger-kit · finance-kit"]
   K --> DB[("PostgreSQL / MongoDB")]
   K -.-> R[("Redis")]
   R -. "BullMQ jobs" .-> W["worker<br/>emails · documents"]
@@ -34,7 +34,7 @@ flowchart LR
 - **One endpoint.** 140 queries and mutations; reports and invoices come back as base64 PDFs or HTML
   inside the response, CSV exports as text. No other routes except `GET /health`.
 - **The kits as internal libraries.** auth-kit sessions and roles, db-kit storage and workflows,
-  catalog-kit prices and reference ranges, report-kit and invoice-kit rendering, tally-kit books,
+  catalog-kit prices and reference ranges, report-kit and invoice-kit rendering, ledger-kit books,
   finance-kit GST and finance. See [docs/01-overview.md](docs/01-overview.md).
 - **Access and refresh tokens.** Short-lived JWTs plus single-use, rotating refresh tokens bound to the
   device; logout and disabling still apply at once. See [docs/06](docs/06-auth-and-permissions.md).
@@ -49,7 +49,7 @@ flowchart LR
 ## Quick start
 
 ```bash
-npm run kits                       # build + install the kits (see docs/03-getting-started.md)
+npm ci                             # kits from GitHub Packages; NODE_AUTH_TOKEN with read:packages (docs/03)
 cp .env.example .env               # DATABASE_URL, …
 SEED_ORG_NAME=… SEED_ORG_CODE=MGPL SEED_BRANCH_CODE=ARG01 SEED_BRANCH_NAME=Arang SEED_BRANCH_STATE=22 \
 SEED_OWNER_NAME=… SEED_OWNER_EMAIL=… SEED_OWNER_PASSWORD=… npm run seed
@@ -96,7 +96,7 @@ npm run llms                # llms-full.txt
 | [client](https://github.com/mgpl-diagnostics/client) | frontend SDK (zero dependencies) |
 | [auth-kit](https://github.com/mgpl-diagnostics/auth-kit) · [db-kit](https://github.com/mgpl-diagnostics/db-kit) · [catalog-kit](https://github.com/mgpl-diagnostics/catalog-kit) | auth, data, test catalog |
 | [report-kit](https://github.com/mgpl-diagnostics/report-kit) · [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | report and invoice rendering |
-| [tally-kit](https://github.com/mgpl-diagnostics/tally-kit) · [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | books, GST and finance |
+| [ledger-kit](https://github.com/mgpl-diagnostics/ledger-kit) · [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | books, GST and finance |
 | [report-studio](https://github.com/mgpl-diagnostics/report-studio) | Next.js reference app |
 
-<sub>© MGPL Diagnostics (Maa Gayatri Path Lab). All rights reserved; see [LICENSE](LICENSE). tally-kit is our own software, not affiliated with Tally Solutions.</sub>
+<sub>© MGPL Diagnostics (Maa Gayatri Path Lab). All rights reserved; see [LICENSE](LICENSE). ledger-kit is our own software, not affiliated with Tally Solutions.</sub>

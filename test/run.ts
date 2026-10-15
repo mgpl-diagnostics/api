@@ -69,7 +69,7 @@ async function suite(db: Db, tag: string) {
   ok((await gql(null, "{ viewer { user { id } } }")).data?.viewer === null, `[${tag}] viewer is null without a token`);
 
   const chart = await gql(owner, "mutation { setupChartOfAccounts { name systemKey } }");
-  ok(chart.data?.setupChartOfAccounts.length > 10, `[${tag}] setupChartOfAccounts (tally-kit chart + finance-kit ledgers): ${chart.data?.setupChartOfAccounts.length} ledgers`);
+  ok(chart.data?.setupChartOfAccounts.length > 10, `[${tag}] setupChartOfAccounts (ledger-kit chart + finance-kit ledgers): ${chart.data?.setupChartOfAccounts.length} ledgers`);
   await gql(otherOwner, "mutation { setupChartOfAccounts { id } }");
   const branchB = (await gql(owner, 'mutation { createBranch(input: { code: "b01", name: "Branch B", kind: collection_center, stateCode: "22" }) { id code } }')).data?.createBranch;
   ok(branchB?.code === "B01", `[${tag}] createBranch (code upper-cased)`);
@@ -113,7 +113,7 @@ async function suite(db: Db, tag: string) {
   const html = await gql(owner, 'query($b: ID!) { bookingReportDocument(bookingId: $b, format: html, variant: non_header) { html } }', { b: booking.booking.id });
   ok(/Asha Patel/.test(html.data?.bookingReportDocument.html ?? "") && /10\.2/.test(html.data.bookingReportDocument.html), `[${tag}] bookingReportDocument html (non-header) carries the patient and results`);
 
-  // ---------------------------------------------------------------- billing + automatic posting (finance-kit → tally-kit)
+  // ---------------------------------------------------------------- billing + automatic posting (finance-kit → ledger-kit)
   const inv = await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id invoiceNo status totalPaise duePaise items { name ratePaise } } }", {
     i: { branchId: a.branch.id, patientId, bookingId: booking.booking.id, items: [{ code: "CBC" }, { code: "HOME", name: "Home collection", category: "service", ratePaise: 10000 }], payments: [{ amountPaise: 20000, mode: "cash" }] },
   });
@@ -123,7 +123,7 @@ async function suite(db: Db, tag: string) {
   const paid = await gql(owner, 'mutation($id: ID!) { recordPayment(invoiceId: $id, payment: { amountPaise: 29900, mode: upi, reference: "UPI9" }) { status payments { mode } vouchers { type entries { ledger { name } debitPaise creditPaise } } } }', { id: invoiceId });
   ok(paid.data?.recordPayment.status === "paid" && paid.data.recordPayment.vouchers.length === 3, `[${tag}] recordPayment → paid; sales + 2 receipt vouchers posted through finance-kit`);
   const tb = await gql(owner, "{ trialBalance { differencePaise totalDebitPaise } outstandingReceivables { totalDuePaise } }");
-  ok(tb.data?.trialBalance.differencePaise === 0 && tb.data.trialBalance.totalDebitPaise > 0 && tb.data.outstandingReceivables.totalDuePaise === 0, `[${tag}] trial balance balances (tally-kit); nothing outstanding`);
+  ok(tb.data?.trialBalance.differencePaise === 0 && tb.data.trialBalance.totalDebitPaise > 0 && tb.data.outstandingReceivables.totalDuePaise === 0, `[${tag}] trial balance balances (ledger-kit); nothing outstanding`);
   const invDoc = await gql(owner, "query($id: ID!) { invoiceDocument(invoiceId: $id) { base64 fileName } h: invoiceDocument(invoiceId: $id, format: html) { html } }", { id: invoiceId });
   ok(Buffer.from(invDoc.data?.invoiceDocument.base64 ?? "", "base64").subarray(0, 5).toString() === "%PDF-" && invDoc.data.h.html.includes(inv.data.issueInvoice.invoiceNo), `[${tag}] invoiceDocument: invoice-kit PDF + HTML of the stored invoice (totals match)`);
   const anyDoc = await gql(owner, '{ renderReport(request: { sample: "cbc" }, format: html) { html } invoiceTotals(request: { invoice: { invoiceNo: "T-1", patient: { name: "Kavita Sharma", age: 32, sex: "Female" }, items: ["cbc"] } }) reportTemplates { templates { id } } }');
@@ -134,7 +134,7 @@ async function suite(db: Db, tag: string) {
   const capital = (await db.rawRepos.ledgers.findBySystemKey(a.org.id, "capital"))!;
   ok(code(await gql(owner, "mutation($i: PostVoucherInput!) { postVoucher(input: $i) { id } }", { i: { branchId: a.branch.id, type: "journal", entries: [{ ledgerId: cash.id, debitPaise: 100 }, { ledgerId: capital.id, creditPaise: 50 }] } })) === "BAD_USER_INPUT", `[${tag}] unbalanced voucher → BAD_USER_INPUT`);
   const journal = await gql(owner, "mutation($i: PostVoucherInput!) { postVoucher(input: $i) { id voucherNo } }", { i: { branchId: a.branch.id, type: "journal", narration: "Capital", entries: [{ ledgerId: cash.id, debitPaise: 100000 }, { ledgerId: capital.id, creditPaise: 100000 }] } });
-  ok(/^JRN\//.test(journal.data?.postVoucher.voucherNo ?? ""), `[${tag}] postVoucher (tally-kit): ${journal.data?.postVoucher.voucherNo}`);
+  ok(/^JRN\//.test(journal.data?.postVoucher.voucherNo ?? ""), `[${tag}] postVoucher (ledger-kit): ${journal.data?.postVoucher.voucherNo}`);
   ok(code(await gql(otherOwner, "mutation($i: PostVoucherInput!) { postVoucher(input: $i) { id } }", { i: { branchId: other.branch.id, type: "journal", entries: [{ ledgerId: cash.id, debitPaise: 100 }, { ledgerId: capital.id, creditPaise: 100 }] } })) === "NOT_FOUND", `[${tag}] cannot post into another organisation's ledgers`);
   ok(code(await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, items: [{ name: "X", qty: 0, ratePaise: 100 }] } })) === "BAD_USER_INPUT", `[${tag}] qty 0 → BAD_USER_INPUT`);
 

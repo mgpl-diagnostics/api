@@ -21,7 +21,7 @@ scripts/               kits.mjs (build kits from source), seed.ts, print-schema.
 test/run.ts            end-to-end over HTTP on PostgreSQL + MongoDB, plus docs/examples validation
 docs/                  A-to-Z docs (Mermaid), examples/*.graphql, LOCAL-AGENT-BRIEF.md
 schema.graphql         printed schema (generated)
-kits.json              kit refs for `npm run kits`
+kits.json              kit refs for `npm run kits` (building unreleased kit branches from source)
 ```
 
 ## Rules
@@ -30,7 +30,7 @@ kits.json              kit refs for `npm run kits`
    travel as `Document { base64 | html }`, exports as `CsvFile`.
 2. **Layers.** Schema → controller → service → kit. Controllers check permissions and map; services hold
    the logic and never import GraphQL; storage changes go to db-kit, finance rules to finance-kit,
-   posting to tally-kit, permissions to auth-kit, catalog data to catalog-kit, layouts to report-kit /
+   posting to ledger-kit, permissions to auth-kit, catalog data to catalog-kit, layouts to report-kit /
    invoice-kit, mail designs to mail-kit (written in its mail design language, never HTML).
 3. **Tenant isolation.** No argument carries an `orgId` or `actorId`. They come from the session
    (`actorOf`). Every id is checked against the organisation (`mustOwn`, `owned`, `scopedFind`).
@@ -57,7 +57,7 @@ kits.json              kit refs for `npm run kits`
 ## Commands
 
 ```bash
-npm run kits                       # once, and after changing kits.json
+npm ci                             # kits from GitHub Packages (NODE_AUTH_TOKEN, read:packages)
 npm run typecheck && npm test && npm run build
 npm run schema && npm run docs:reference && npm run llms
 ```

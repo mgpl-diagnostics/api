@@ -31,7 +31,7 @@ service layer.
 | [catalog-kit](https://github.com/mgpl-diagnostics/catalog-kit) | The test catalog: names, codes, prices, units, reference ranges, search |
 | [report-kit](https://github.com/mgpl-diagnostics/report-kit) | Report PDFs and HTML (Navy Sidebar and classic designs) |
 | [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | Invoice PDFs and HTML, invoice arithmetic |
-| [tally-kit](https://github.com/mgpl-diagnostics/tally-kit) | Our own double-entry engine: ledgers, vouchers, books reports |
+| [ledger-kit](https://github.com/mgpl-diagnostics/ledger-kit) | Our own double-entry engine: ledgers, vouchers, books reports |
 | [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | GST, GSTR-1/3B data, receivables, settlements, cash and bank, lock dates, exports |
 | [security-kit](https://github.com/mgpl-diagnostics/security-kit) | Security headers on every response, the client IP behind proxies (`TRUST_PROXY`); in the client, the device signals |
 | [client](https://github.com/mgpl-diagnostics/client) | Not used by the API; the frontend SDK that calls it |
@@ -53,4 +53,4 @@ service layer.
   catalog needs a staff session.
 - Not tax advice. GST rates, TDS and thresholds are configuration that the lab's CA must confirm
   (`verifyWithCA` lists them).
-- Not integrated with Tally software. tally-kit is our own engine with Tally-like concepts.
+- Not integrated with Tally software. ledger-kit is our own engine with Tally-like concepts.

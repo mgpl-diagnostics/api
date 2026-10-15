@@ -42,7 +42,7 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
       backend: config.db.backend,
       ...(config.db.backend === "pg" ? { pg: { url: config.db.url } } : { mongo: { uri: config.db.url } }),
       redis: config.redisUrl ?? undefined,
-      // invoices and payments post to the books through finance-kit → tally-kit
+      // invoices and payments post to the books through finance-kit → ledger-kit
       posting: financePosting,
     } as Parameters<typeof createDb>[0]));
 
