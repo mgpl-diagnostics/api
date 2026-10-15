@@ -1,4 +1,4 @@
-/** The books (tally-kit, our accounting engine): chart of accounts, vouchers, reports. */
+/** The books (ledger-kit, our accounting engine): chart of accounts, vouchers, reports. */
 export const booksTypeDefs = /* GraphQL */ `
   enum AccountNature { assets liabilities income expenses }
   enum VoucherStatus { posted cancelled }

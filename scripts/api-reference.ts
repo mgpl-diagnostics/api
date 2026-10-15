@@ -1,10 +1,12 @@
 // Writes docs/04-api-reference.md from the schema (operations, arguments, return types, descriptions)
 // and the controllers (the permission each resolver checks). Run `npm run docs:reference`; CI fails when it is stale.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { GraphQLObjectType, type GraphQLField } from "graphql";
 import { buildSchema, MODULES } from "../src/graphql/schema";
 
-const root = new URL("..", import.meta.url).pathname;
+// fileURLToPath, not .pathname: on Windows .pathname gives "/E:/…" with %20 for spaces
+const root = fileURLToPath(new URL("..", import.meta.url));
 const schema = buildSchema();
 
 /** field → permissions found in its resolver body, per root type. */

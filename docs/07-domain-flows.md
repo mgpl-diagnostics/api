@@ -87,14 +87,14 @@ stateDiagram-v2
 - Arithmetic (db-kit, integer paise): line gross → line discount → bill discount shared by largest
   remainder → GST → round-off to the rupee.
 - Every issue, payment, refund, credit note and cancel posts a voucher **in the same transaction**
-  (`financePosting` → tally-kit). A failed posting rolls the whole operation back.
+  (`financePosting` → ledger-kit). A failed posting rolls the whole operation back.
 
 ```mermaid
 sequenceDiagram
   participant API as billing service
   participant DB as db-kit issueInvoice
   participant H as financePosting (hook)
-  participant T as tally-kit postVoucher
+  participant T as ledger-kit postVoucher
   API->>DB: repos.transaction(tx => …)
   DB->>DB: compute totals, number MGPL/ARG01/2026-27/000123
   DB->>H: invoiceIssued(tx, invoice)
