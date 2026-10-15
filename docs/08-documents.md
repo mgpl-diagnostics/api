@@ -66,6 +66,12 @@ HTTP APIs did (`ReportRequest`: patient + tests | profile | report | sample; `In
 `{ invoice }` or `{ sample }`). They are for previews (result entry with a live preview, quotes). Samples
 (`documentSamples`, `invoiceSamples`, `{ sample: id }`) work only when `MGPL_SAMPLES=true`.
 
+## In the background
+
+Large prints can go to the worker: `startDocumentJob(input: { kind: invoice | booking_reports, … })`
+returns a `Job`, and `job(id)` returns it with `document` once `state` is `completed`. See
+[16-worker.md](16-worker.md).
+
 ## Signatures and branding
 
 The lab profile is `defaultLab()` from report-kit: branding plus signatures read from

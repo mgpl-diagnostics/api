@@ -30,9 +30,17 @@ flowchart TB
   end
   DB[("PostgreSQL / MongoDB")]
   RD[("Redis (optional)")]
+  subgraph JOBS["Jobs · src/jobs"]
+    Q["JobQueue<br/>BullMQ on Redis, or in-process"]
+    W["Worker · src/worker.ts<br/>processors → the same services"]
+  end
   F --> Y --> SDL --> C
   Y --> CTX --> C
   C --> S --> KITS
+  S --> Q
+  Q -.-> RD
+  RD -.-> W
+  W --> S
   K2 --> DB
   K1 -.-> RD
   K2 -.-> RD
@@ -41,6 +49,8 @@ flowchart TB
 | Layer | Folder | Does | Does not |
 |---|---|---|---|
 | Server | `src/server.ts`, `src/main.ts` | Fastify, Yoga, `/health`, shutdown | Business logic |
+| Worker | `src/worker.ts` | BullMQ workers on Redis, shutdown | HTTP |
+| Jobs | `src/jobs/` | Queue (BullMQ or in-process), job payloads, processors that call services, the webhook mailer | Permissions (checked before queueing) |
 | Schema | `src/schema/` | SDL, one file per module | Code |
 | GraphQL plumbing | `src/graphql/` | Context, guards, errors, scalars, loaders, limits, schema assembly | Domain rules |
 | Controllers | `src/controllers/` | Permissions, argument mapping, nested fields | Database writes |
@@ -53,8 +63,9 @@ flowchart TB
 ```
 src/
   main.ts               start: loadConfig → createContainer → buildServer → listen; SIGINT/SIGTERM close
+  worker.ts             start the worker: loadConfig → createContainer → startWorkers (needs REDIS_URL)
   server.ts             Fastify + Yoga (one endpoint) + GET /health
-  container.ts          createDb (posting: financePosting), createAuth (Redis or memory stores), services
+  container.ts          createDb (posting: financePosting), createAuth (JWT mode; Redis or memory stores), job queue, services
   index.ts              library entry (buildServer, createContainer, buildSchema, … for tests and embedding)
   config/env.ts         loadConfig(env) → Config
   graphql/
@@ -65,6 +76,13 @@ src/
     scalars.ts          DateTime, Day, JSON
     loaders.ts          per-request BatchLoader per entity (no N+1)
     limits.ts           depthLimit
+    device.ts           DeviceInput → auth-kit DeviceSignals (moves to security-kit later)
+  jobs/
+    types.ts            QUEUES, job payloads, JobInfo, JobQueue, JobFailure
+    processors.ts       password-reset, document rendering (call services)
+    bullmq.ts           createBullJobQueue (producer), startWorkers (consumer)
+    inline.ts           createInlineJobQueue (no Redis: runs at once in this process)
+    mailer.ts           webhookMailer (MAIL_WEBHOOK_URL)
   schema/<module>.graphql.ts      SDL
   controllers/<module>.controller.ts
   services/<area>.service.ts, index.ts (createServices), util.ts
@@ -90,11 +108,11 @@ sequenceDiagram
   participant Sv as Service
   participant Kt as db-kit / finance-kit
   participant DB as Database
-  Cl->>Fa: POST /graphql (Authorization: Bearer t)
+  Cl->>Fa: POST /graphql (Authorization: Bearer access JWT)
   Fa->>Yo: handleNodeRequestAndResponse
   Yo->>Yo: parse, validate (depth ≤ 12, introspection rule)
   Yo->>Cx: build context
-  Cx->>Au: context(t) → re-reads the user every request
+  Cx->>Au: context(t) → verifies the JWT, checks the session, re-reads the user
   Au-->>Cx: viewer, can(), branchesFor()
   Yo->>Ct: resolve issueInvoice(input)
   Ct->>Ct: authorize(ctx, "invoice:create", input.branchId)
@@ -145,8 +163,10 @@ flowchart LR
   ENV["process.env"] --> CFG["loadConfig()"]
   CFG --> CON["createContainer()"]
   CON --> DBX["createDb({ backend, url, redis?, posting: financePosting })"]
-  CON --> AUX["createAuth({ users, orgs, roles, audit from db,<br/>sessions/kv/limiter from Redis or memory })"]
-  CON --> SVX["createServices(db.repos, auth, mailer, lab)"]
+  CON --> AUX["createAuth({ users, orgs, roles, audit from db,<br/>sessions/kv/limiter from Redis or memory, jwt, deviceBinding })"]
+  CON --> JQ["job queue: BullMQ (REDIS_URL) or in-process"]
+  CON --> SVX["createServices(db.repos, auth, mailer, lab, jobs)"]
+  CON -. "jobDeps" .-> WK["startWorkers (src/worker.ts)"]
   CON --> SRV["buildServer(container)"]
 ```
 

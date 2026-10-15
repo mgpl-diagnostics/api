@@ -1,48 +1,82 @@
 # 06 · Auth and permissions
 
-## Sessions
+## Sessions: access and refresh tokens
 
-auth-kit owns passwords and sessions. The API never sees a password hash leave the server and never
-stores a raw token: stores receive `hashToken(token)` (SHA-256) only.
+auth-kit owns passwords and sessions (JWT mode). `login` returns two tokens:
+
+- **access token**: an HS256 JWT `{ sub, org, sid, iat, exp, iss }`, valid 15 minutes, sent as `Authorization: Bearer`;
+- **refresh token**: opaque and single-use. `refreshSession` spends it and returns a new pair.
+
+Revocation still applies at once: every request checks that the session (`sid`) exists and re-reads
+the user. No store ever holds a raw token, only `hashToken(token)` (SHA-256).
 
 ```mermaid
 sequenceDiagram
-  participant C as Client
+  participant C as Client (SDK session manager)
   participant A as API (auth controller)
   participant K as auth-kit
-  participant S as Session store (Redis or memory)
+  participant S as Session store + kv (Redis or memory)
   participant U as Users (db-kit)
-  C->>A: login(email, password, orgCode?)
+  C->>A: login(email, password, orgCode?, device)
   A->>K: login()
   K->>U: find user (unknown email still runs one scrypt verify: timing-safe)
   K->>K: rate limit per email+ip (10 per 15 min)
-  K->>S: save hash(token), idle + max age
-  K-->>C: token, expiresAt, user
-  C->>A: any request (Bearer token)
-  A->>K: context(token)
-  K->>S: get hash(token), extend idle window
+  K->>S: session { random id, device }, refresh:hash(R1) → id
+  K-->>C: accessToken (JWT, 15 min) + R1 + user
+  C->>A: any request (Bearer JWT)
+  A->>K: context(JWT): verify HS256, exp, iss
+  K->>S: session still there? extend idle window
   K->>U: re-read the user (disable / role changes apply at once)
   K-->>A: viewer, can(), branchesFor()
+  C->>A: refreshSession(R1, device)
+  K->>S: take refresh:hash(R1) (single use), compare deviceId
+  K-->>C: new JWT + R2
+  Note over C,K: R1 used again later → the session ends (copied token). Another deviceId → the session ends.
 ```
 
 | Setting | Default | Env |
 |---|---|---|
-| Idle timeout | 12 hours | `SESSION_IDLE_MS` |
+| Access-token lifetime | 15 minutes | `ACCESS_TOKEN_TTL_MS` |
+| Signing secret(s) | random per process in development; **required** in production | `JWT_SECRET` (≥ 32 characters; comma-separated to rotate: the first signs) |
+| Issuer | `mgpl-api` | `JWT_ISSUER` |
+| Idle timeout (refresh token lifetime, slides) | 12 hours | `SESSION_IDLE_MS` |
 | Maximum age | 30 days | `SESSION_MAX_AGE_MS` |
+| Device binding | `enforce` | `DEVICE_BINDING` (`enforce`, `flag`, `off`) |
 | Login attempts | 10 per 15 minutes | (auth-kit default) |
 
-Session operations: `mySessions`, `revokeSession`, `logout`, `logoutOtherSessions`. `changePassword`
+- **Rotation.** A spent refresh token presented again within 15 s (two tabs refreshing at once) is only
+  refused; later, it ends the session and is audited (`auth.refresh_reuse`).
+- **Logout.** `logout` ends the bearer's session, or the session of `logout(refreshToken)` (works with an
+  expired access token).
+- **Rotating the secret.** Set `JWT_SECRET=new,old`, deploy, wait 15 minutes, then set `JWT_SECRET=new`.
+
+Session operations: `mySessions` (with `deviceId` and `deviceInfo`), `revokeSession`, `logout`, `logoutOtherSessions`.
+
+### Device signals
+
+The client sends `device: DeviceInput` with `login` and `refreshSession`. The SDK collects these values;
+any client may send them.
+
+| Field | What it is | Server use |
+|---|---|---|
+| `deviceId` | random id kept by the client per browser profile or install | stored at login; a refresh from another `deviceId` → `INVALID_TOKEN`, the session ends, audit `auth.device_mismatch` (`DEVICE_BINDING=flag` only audits) |
+| `fingerprint` | client-side SHA-256 of the `info` values | a change is audited (`auth.fingerprint_changed`), never blocked |
+| `clientSessionId` | random id per tab or app run | stored (latest) |
+| `info` | platform, language, timezone, screen, cores, memory, touch points, user agent | stored (latest), shown in `mySessions.deviceInfo` |
+
+Values are untrusted: auth-kit's `cleanDeviceSignals` keeps ids of 8–128 safe characters and at most
+20 short `info` values. A session that signed in without a `deviceId` is bound by its first refresh that
+sends one. The mapping lives in `src/graphql/device.ts` alone, ready to move to security-kit. `changePassword`
 ends the user's other sessions; `resetPassword`, an administrator's `setUserPassword` and `disableUser`
 end all of them.
 
 ### Password reset
 
-`requestPasswordReset(email, orgCode?)` always returns `true`, whether or not the account exists. When it
-does, the server's `Mailer` receives the link `PASSWORD_RESET_URL?token=…`. The token is never returned by
-the API. `resetPassword(token, newPassword)` consumes it once.
-
-The `main.ts` entry has no mailer; embed the API with `createContainer({ config, mailer })` to send
-emails ([12-deployment.md](12-deployment.md)).
+`requestPasswordReset(email, orgCode?)` always returns `true`, whether or not the account exists, and
+only queues a job. The worker ([16-worker.md](16-worker.md)), or the API itself without Redis, creates
+the token and sends `PASSWORD_RESET_URL?token=…` through the `Mailer` (`MAIL_WEBHOOK_URL`, or
+`createContainer({ config, mailer })`). The token is never returned by the API and never stored raw.
+`resetPassword(token, newPassword)` consumes it once.
 
 ## Permissions
 

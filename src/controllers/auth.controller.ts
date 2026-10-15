@@ -2,6 +2,7 @@ import type { RoleAssignment, User } from "@mgpl-diagnostics/db-kit";
 import type { RequestContext as Ctx } from "../graphql/context";
 import { unauthenticated, withErrorCodes } from "../graphql/errors";
 import { actorOf, authorize } from "../graphql/guards";
+import { deviceOf, type DeviceInput } from "../graphql/device";
 
 /** auth-kit: sign-in, sessions, passwords; users and roles. */
 export const authController = withErrorCodes({
@@ -9,7 +10,7 @@ export const authController = withErrorCodes({
     viewer: (_: unknown, __: unknown, ctx: Ctx) => (ctx.viewer ? {} : null),
     mySessions: async (_: unknown, __: unknown, ctx: Ctx) => {
       const sessions = await ctx.services.auth.sessions(actorOf(ctx));
-      return sessions.map((s) => ({ ...s, current: s.id === ctx.viewer!.sessionId, createdAt: new Date(s.createdAt), lastSeenAt: new Date(s.lastSeenAt), expiresAt: new Date(s.expiresAt) }));
+      return sessions.map((s) => ({ ...s, current: s.id === ctx.viewer!.sessionId, createdAt: new Date(s.createdAt), lastSeenAt: new Date(s.lastSeenAt), expiresAt: new Date(s.expiresAt), deviceId: s.device?.deviceId ?? null, deviceInfo: s.device?.info ?? null }));
     },
     users: (_: unknown, __: unknown, ctx: Ctx) => ctx.services.auth.users(authorize(ctx, "user:read")),
     user: (_: unknown, a: { id: string }, ctx: Ctx) => ctx.services.auth.user(authorize(ctx, "user:read"), a.id),
@@ -37,11 +38,16 @@ export const authController = withErrorCodes({
   },
 
   Mutation: {
-    login: (_: unknown, { input }: { input: { email: string; password: string; orgCode?: string | null } }, ctx: Ctx) =>
-      ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent }),
-    logout: async (_: unknown, __: unknown, ctx: Ctx) => {
-      if (!ctx.token) throw unauthenticated();
-      await ctx.services.auth.logout(ctx.token);
+    login: async (_: unknown, { input: { device, ...input } }: { input: { email: string; password: string; orgCode?: string | null; device?: DeviceInput | null } }, ctx: Ctx) => {
+      const r = await ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(device) });
+      return { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt };
+    },
+    refreshSession: (_: unknown, a: { refreshToken: string; device?: DeviceInput | null }, ctx: Ctx) =>
+      ctx.services.auth.refresh({ refreshToken: a.refreshToken, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device) }),
+    logout: async (_: unknown, a: { refreshToken?: string | null }, ctx: Ctx) => {
+      const token = a.refreshToken || ctx.token;
+      if (!token) throw unauthenticated();
+      await ctx.services.auth.logout(token);
       return true;
     },
     logoutOtherSessions: (_: unknown, __: unknown, ctx: Ctx) => ctx.services.auth.logoutOthers(actorOf(ctx), ctx.token!),

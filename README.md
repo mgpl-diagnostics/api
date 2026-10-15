@@ -25,15 +25,21 @@ flowchart LR
   API --> K["auth-kit · db-kit · catalog-kit<br/>report-kit · invoice-kit · tally-kit · finance-kit"]
   K --> DB[("PostgreSQL / MongoDB")]
   K -.-> R[("Redis")]
+  R -. "BullMQ jobs" .-> W["worker<br/>emails · documents"]
+  W --> K
 ```
 
 ## What you get
 
-- **One endpoint.** 137 queries and mutations; reports and invoices come back as base64 PDFs or HTML
+- **One endpoint.** 140 queries and mutations; reports and invoices come back as base64 PDFs or HTML
   inside the response, CSV exports as text. No other routes except `GET /health`.
 - **The kits as internal libraries.** auth-kit sessions and roles, db-kit storage and workflows,
   catalog-kit prices and reference ranges, report-kit and invoice-kit rendering, tally-kit books,
   finance-kit GST and finance. See [docs/01-overview.md](docs/01-overview.md).
+- **Access and refresh tokens.** Short-lived JWTs plus single-use, rotating refresh tokens bound to the
+  device; logout and disabling still apply at once. See [docs/06](docs/06-auth-and-permissions.md).
+- **A worker on Redis + BullMQ** for reset emails and background documents (`npm run worker`); without
+  Redis the same jobs run in the API process. See [docs/16-worker.md](docs/16-worker.md).
 - **Layers.** `schema/` (SDL) → `controllers/` (permissions, mapping) → `services/` (kit calls) → kits.
 - **Safe by construction.** The organisation and user come from the session; every record is checked
   against them and against its branch; unknown errors are masked; depth and list limits.

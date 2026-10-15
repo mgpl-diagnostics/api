@@ -30,9 +30,10 @@ and runnable examples are in [examples/](examples/).
 | mutation | `disableUser(userId: ID!): User!` | `user:disable` |  |
 | mutation | `enableUser(userId: ID!): User!` | `user:disable` |  |
 | mutation | `login(input: LoginInput!): LoginResult!` | public |  |
-| mutation | `logout: Boolean!` | public | Ends this session. |
+| mutation | `logout(refreshToken: String): Boolean!` | public | Ends this session: the bearer token (even an expired access token), or the refresh token when given. |
 | mutation | `logoutOtherSessions: Int!` | (signed in) | Ends every other session of the signed-in user; returns how many. |
-| mutation | `requestPasswordReset(email: String!, orgCode: String): Boolean!` | public | Always true (never reveals whether the email exists). The link is sent by the server's mailer. |
+| mutation | `refreshSession(refreshToken: String!, device: DeviceInput): LoginResult!` | public | Spends a refresh token and returns a new access token and the next refresh token. A refresh token used twice ends its session (it was copied); within a few seconds (two tabs) the second use only fails. Send the same device as at login: a refresh from another device id ends the session (DEVICE_BINDING). INVALID_TOKEN when it is unknown, spent or expired: sign in again. |
+| mutation | `requestPasswordReset(email: String!, orgCode: String): Boolean!` | public | Always true (never reveals whether the email exists). Queued: the worker creates the single-use token and mails the link. |
 | mutation | `resetPassword(token: String!, newPassword: String!): Boolean!` | public |  |
 | mutation | `revokeSession(id: ID!): Boolean!` | (signed in) |  |
 | mutation | `setUserPassword(userId: ID!, newPassword: String!): Boolean!` | `user:update` |  |
@@ -184,8 +185,10 @@ and runnable examples are in [examples/](examples/).
 | query | `invoiceDocument(invoiceId: ID!, format: DocumentFormat, variant: ReportVariant): Document!` | `invoice:read` | A stored invoice, printed. |
 | query | `invoiceSamples: [DocumentSample!]!` | (signed in) |  |
 | query | `invoiceTotals(request: JSON!): JSON!` | `invoice:read` | invoice-kit's calculation of an InvoiceRequest, without rendering (rupees). |
+| query | `job(id: ID!): Job` | (signed in) | A job you started (null when unknown, expired, or someone else's). |
 | query | `letterhead(format: DocumentFormat): Document!` | `report:read` |  |
 | query | `priceList: [PriceListEntry!]!` | (signed in) | invoice-kit's sample price list (codes = report-kit template and profile ids, services, consumables). |
 | query | `renderInvoice(request: JSON!, format: DocumentFormat, variant: ReportVariant, fileName: String): Document!` | `invoice:read` | Any invoice: request = invoice-kit's InvoiceRequest JSON ({ invoice } or { sample }). |
 | query | `renderReport(request: JSON!, format: DocumentFormat, variant: ReportVariant, design: ReportDesign, fileName: String): Document!` | `report:read` | Any report: request = report-kit's ReportRequest JSON (patient + tests \| profile \| report \| sample). |
 | query | `reportTemplates: TemplateCatalog!` | (signed in) |  |
+| mutation | `startDocumentJob(input: DocumentJobInput!): Job!` | `invoice:read`, `report:read` | Renders a stored invoice or a booking's reports in the background; poll job(id) until completed or failed. |

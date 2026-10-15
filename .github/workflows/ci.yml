@@ -17,6 +17,12 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # the worker suite runs the API and a BullMQ worker against this Redis
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -26,8 +32,10 @@ jobs:
       # (Switch to the registry once every kit is published: docs/LOCAL-AGENT-BRIEF.md.)
       - run: npm run kits
       - run: npm run typecheck
-      - name: End-to-end tests (GraphQL over HTTP, auth-kit sessions) on PostgreSQL and MongoDB
+      - name: End-to-end tests (GraphQL over HTTP, tokens, worker on Redis, client SDK) on PostgreSQL and MongoDB
         run: npm test
+        env:
+          REDIS_URL: redis://localhost:6379
       - run: npm run build
       - name: schema.graphql is up to date (run `npm run schema` and commit if this fails)
         run: npm run schema && git diff --exit-code -- schema.graphql

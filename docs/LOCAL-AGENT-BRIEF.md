@@ -21,6 +21,7 @@ flowchart TD
   I --> J["8 · db-kit 2.0.0: remove src/graphql"]
   J --> K["9 · Deploy + seed"]
   K --> L["10 · CA review"]
+  L --> M["11 · Tokens, worker, device binding"]
 ```
 
 ## Ground rules
@@ -141,7 +142,9 @@ Follow [12-deployment.md](12-deployment.md). In particular:
 - `REDIS_URL` for more than one server; `CORS_ORIGINS` set to the app origins; `TRUST_PROXY=true`.
 - Real signature images in a secret volume, `MGPL_SIGNATURE_HEADER_FILE` / `MGPL_SIGNATURE_NONHEADER_FILE`.
   Never commit them.
-- Wire a `Mailer` (email provider) for password-reset links, and `PASSWORD_RESET_URL`.
+- `JWT_SECRET` from your secret store (≥ 32 random characters: `openssl rand -base64 48`), the same on every API server and worker.
+- Run at least one worker: `node dist/worker.js` with `REDIS_URL` and the API's environment.
+- `MAIL_WEBHOOK_URL` (an HTTP relay to the email provider) for password-reset links, and `PASSWORD_RESET_URL`.
 - `npm run seed` once, with the branch's GST state code (`SEED_BRANCH_STATE`, 22 for Chhattisgarh) and
   the organisation's GSTIN (`SEED_ORG_GSTIN`); billing needs the first, GST returns the second.
 - Add every other branch with `createBranch` **including its `stateCode`**.
@@ -153,6 +156,31 @@ Done when: `GET /health` → 200, an owner can sign in, issue an invoice, and pr
 Call `verifyWithCA` and `taxRules` after `seedTaxRules`, and give the list to the lab's chartered
 accountant. The agent records answers only as the owner instructs (`addTaxRule`, `settings.finance`);
 it never picks rates itself. finance-kit's `docs/gst-notes.md` explains each item.
+
+## 11. Tokens, worker, device binding
+
+Added after the first release (auth-kit 1.2.0, client 1.2.0, api with JWT and the worker).
+
+- **Tag the releases.** auth-kit: bump nothing (package.json already says 1.2.0), tag `v1.2.0` on
+  `main`'s head. client: tag `v1.2.0` on `main`'s head. Done when both appear on GitHub Packages.
+  Then, in step 7, point `kits.json` / `package.json` at those versions.
+- **Redis in production** is now required for more than one server *and* for the worker. Create it
+  with AOF persistence if queued emails must survive a restart.
+- **Run the worker** next to the API (same image, command `node dist/worker.js`), at least one, with
+  `WORKER_CONCURRENCY` sized to the CPU (rendering is CPU-bound). Check its log line
+  `[worker] queues mail, documents on mgpl:`.
+- **Email relay.** Set `MAIL_WEBHOOK_URL` to a small function that forwards `{ to, subject, text }` to
+  the lab's email provider. Done when "Forgot password" delivers a link.
+- **Secret rotation drill.** Set `JWT_SECRET=new,old`, deploy, wait 15 minutes, set `JWT_SECRET=new`.
+- **Device binding** is `enforce` by default. If staff share browsers or wipe storage often and get
+  signed out, switch to `DEVICE_BINDING=flag` and read the `auth.device_mismatch` audit entries first.
+- **Privacy notice.** The client sends device signals (list in the client's `docs/session.md`); add
+  them to the lab's privacy notice before going live.
+- **security-kit.** The device-signal code is self-contained (`client/src/graphql/device.ts`,
+  `api/src/graphql/device.ts`, auth-kit's `cleanDeviceSignals`) so it can move to security-kit.
+
+Done when: a login survives an access-token expiry without the user noticing, a reset email arrives,
+and `startDocumentJob` completes with a worker running.
 
 ## Report back
 
@@ -169,4 +197,5 @@ Post one message with:
 8 db-kit 2.0.0 ........... PRs <links> / not started
 9 deploy + seed .......... done at <url> / not started
 10 CA review ............. handed to owner / …
+11 tokens + worker ....... tags v1.2.0 (auth-kit, client) · worker running · reset email arrives / …
 ```

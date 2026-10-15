@@ -5,10 +5,11 @@ import { buildServer } from "./server";
 
 const config = loadConfig();
 const container = await createContainer({ config });
-if (!container.db.redis && config.env === "production") console.warn("[api] REDIS_URL is not set: sessions live in this process only (one server, lost on restart)");
-// No mailer is wired in this entry: requestPasswordReset still answers true but sends nothing.
-// Embed the API with createContainer({ config, mailer }) to send reset links (docs/12-deployment.md).
-if (config.env === "production") console.warn("[api] no Mailer configured: password-reset links are not sent");
+if (config.env === "production" && !config.redisUrl) console.warn("[api] REDIS_URL is not set: sessions and jobs live in this process only (one server, lost on restart)");
+if (config.jwt.generated) console.warn("[api] JWT_SECRET is not set: using a random secret, so tokens die when the process restarts");
+// With REDIS_URL, emails and background documents are sent and rendered by `npm run worker`.
+// Without it they run here; reset links go to MAIL_WEBHOOK_URL (or createContainer({ config, mailer })).
+if (config.env === "production" && !config.redisUrl && !config.mailWebhookUrl) console.warn("[api] no Mailer configured: password-reset links are not sent");
 const app = await buildServer(container);
 await app.listen({ host: config.host, port: config.port });
 console.log(`[api] GraphQL on http://${config.host}:${config.port}${config.graphqlPath} (${config.db.backend})`);
