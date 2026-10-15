@@ -2132,7 +2132,7 @@ Added after the first release (auth-kit 1.2.0, client 1.2.0, api with JWT and th
   them to the lab's privacy notice before going live.
 - **security-kit.** The client collects device signals with security-kit, and the api uses it for
   security headers and the client IP. Publish it (see the shared brief's security-kit step), then switch
-  the client's `github:` dev dependency to `^0.2.0`.
+  the client's git dev dependency on it to `^0.2.0`.
 
 Done when: a login survives an access-token expiry without the user noticing, a reset email arrives,
 and `startDocumentJob` completes with a worker running.
