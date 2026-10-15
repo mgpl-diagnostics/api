@@ -1,6 +1,7 @@
-import { PERMISSIONS, SYSTEM_ROLES, type Auth, type PublicUser } from "@mgpl-diagnostics/auth-kit";
+import { PERMISSIONS, SYSTEM_ROLES, type Auth, type DeviceSignals, type PublicUser } from "@mgpl-diagnostics/auth-kit";
 import { ConflictError, createUser, NotFoundError, ValidationError, type Id, type Repositories, type Role, type RoleAssignment, type User } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
+import type { JobQueue } from "../jobs/types";
 import { mustOwn } from "./util";
 
 /** Sends password-reset links. Plug in email/SMS in the container; the API never returns reset tokens. */
@@ -15,15 +16,22 @@ export class AuthService {
   constructor(
     private readonly repos: Repositories,
     private readonly auth: Auth,
-    private readonly opts: { mailer?: Mailer; resetUrl: string | null },
+    private readonly opts: { mailer?: Mailer; resetUrl: string | null; jobs: () => JobQueue },
   ) {}
 
   // ---------------------------------------------------------------- sessions
 
-  login(input: { email: string; password: string; orgCode?: string | null; ip?: string; userAgent?: string }) {
+  login(input: { email: string; password: string; orgCode?: string | null; ip?: string; userAgent?: string; device?: DeviceSignals }) {
     return this.auth.login({ ...input, orgCode: input.orgCode ?? undefined });
   }
 
+  /** Spends a refresh token: a new access token and the next refresh token (rotation). */
+  async refresh(input: { refreshToken: string; ip?: string; userAgent?: string; device?: DeviceSignals }) {
+    const p = await this.auth.refresh(input);
+    return { token: p.accessToken, expiresAt: p.accessExpiresAt, ...p };
+  }
+
+  /** Ends the session of an access token (even expired), or of a refresh token. */
   logout(token: string) {
     return this.auth.logout(token);
   }
@@ -45,12 +53,25 @@ export class AuthService {
     return this.auth.changePassword({ userId: actor.userId, currentPassword, newPassword, currentToken });
   }
 
-  /** Always resolves (never reveals whether the email exists). The link goes out through the mailer. */
-  async requestPasswordReset(input: { email: string; orgCode?: string | null; ip?: string }): Promise<void> {
+  /**
+   * Always resolves (never reveals whether the email exists). Queued: the worker (or, without Redis,
+   * this process) runs `sendPasswordReset`, so the answer takes the same time for every email.
+   */
+  requestPasswordReset(input: { email: string; orgCode?: string | null; ip?: string }): Promise<void> {
+    return this.opts.jobs().passwordReset({ email: input.email, orgCode: input.orgCode ?? null, ip: input.ip });
+  }
+
+  /** The job: creates the single-use token (auth-kit) and mails the link. True when an email went out. */
+  async sendPasswordReset(input: { email: string; orgCode?: string | null; ip?: string }): Promise<boolean> {
     const r = await this.auth.requestPasswordReset({ email: input.email, orgCode: input.orgCode ?? undefined, ip: input.ip });
-    if (!r || !this.opts.mailer) return;
+    if (!r) return false;
+    if (!this.opts.mailer) {
+      console.warn("[auth] no Mailer configured: a password-reset link was not sent");
+      return false;
+    }
     const base = this.opts.resetUrl ?? "/reset-password";
     await this.opts.mailer.passwordReset({ email: r.user.email, name: r.user.name }, `${base}?token=${encodeURIComponent(r.token)}`, r.expiresAt);
+    return true;
   }
 
   resetPassword(token: string, newPassword: string): Promise<PublicUser> {

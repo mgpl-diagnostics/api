@@ -2,18 +2,21 @@
 // databases started in-process: PostgreSQL always, MongoDB (replica set) unless TEST_BACKENDS=pg.
 //   npm test                     both backends (first run downloads the database binaries)
 //   TEST_BACKENDS=pg npm test    PostgreSQL only (when MongoDB binaries cannot be downloaded)
+import { spawn, type ChildProcess } from "node:child_process";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization, type Db, type Repositories } from "@mgpl-diagnostics/db-kit";
 import { financePosting, istDay } from "@mgpl-diagnostics/finance-kit";
-import { OPERATIONS } from "@mgpl-diagnostics/client";
+import { createMgplGraphQLClient, OPERATIONS } from "@mgpl-diagnostics/client";
 import { parse, validate } from "graphql";
+import { Redis } from "ioredis";
 import { loadConfig } from "../src/config/env";
 import { buildSchema } from "../src/graphql/schema";
 import { createContainer } from "../src/container";
 import { buildServer } from "../src/server";
+import { startWorkers } from "../src/jobs";
 import type { Mailer } from "../src/services/auth.service";
 
 let passed = 0;
@@ -54,10 +57,10 @@ async function suite(db: Db, tag: string) {
   ok(health.statusCode === 200 && (await gql(null, "{ health { ok database } }")).data?.health.ok, `[${tag}] GET /health and { health } report the database`);
   ok(code(await gql(null, "{ organization { name } }")) === "UNAUTHENTICATED", `[${tag}] no token → UNAUTHENTICATED`);
   ok(code(await gql(null, 'mutation { login(input: { email: "owner@apl.test", password: "wrong-password" }) { token } }')) === "INVALID_CREDENTIALS", `[${tag}] wrong password → INVALID_CREDENTIALS`);
-  const login = async (email: string, password = pw) => (await gql(null, "mutation($i: LoginInput!) { login(input: $i) { token user { email } } }", { i: { email, password } })).data?.login.token as string;
+  const login = async (email: string, password = pw) => (await gql(null, "mutation($i: LoginInput!) { login(input: $i) { accessToken user { email } } }", { i: { email, password } })).data?.login.accessToken as string;
   const owner = await login("owner@apl.test");
   const otherOwner = await login("x@oth.test");
-  ok(typeof owner === "string" && owner.length > 20, `[${tag}] login → bearer token`);
+  ok(typeof owner === "string" && owner.split(".").length === 3, `[${tag}] login → access token (JWT)`);
   const viewer = await gql(owner, '{ viewer { user { email } organization { code } can(permission: "accounts:post") branchesFor(permission: "invoice:read") } }');
   ok(viewer.data?.viewer.user.email === "owner@apl.test" && viewer.data.viewer.organization.code === "APL" && viewer.data.viewer.can && viewer.data.viewer.branchesFor === null, `[${tag}] viewer: user, organisation, permissions`);
   ok((await gql(null, "{ viewer { user { id } } }")).data?.viewer === null, `[${tag}] viewer is null without a token`);
@@ -201,6 +204,36 @@ async function suite(db: Db, tag: string) {
   await gql(owner, "mutation { logout }");
   ok(code(await gql(owner, "{ organization { id } }")) === "UNAUTHENTICATED", `[${tag}] logout ends the session`);
 
+  // ---------------------------------------------------------------- access + refresh tokens (auth-kit JWT mode)
+  const pair = (await gql(null, 'mutation { login(input: { email: "x@oth.test", password: "Lab-Owner-2026!" }) { accessToken accessExpiresAt refreshToken refreshExpiresAt token } }')).data?.login;
+  ok(pair?.accessToken.split(".").length === 3 && pair.refreshToken.length > 20 && pair.token === pair.accessToken && new Date(pair.accessExpiresAt) < new Date(pair.refreshExpiresAt), `[${tag}] login → access JWT + refresh token (refresh outlives access)`);
+  const next = (await gql(null, "mutation($r: String!) { refreshSession(refreshToken: $r) { accessToken refreshToken user { email } } }", { r: pair.refreshToken })).data?.refreshSession;
+  ok(next?.user.email === "x@oth.test" && next.refreshToken !== pair.refreshToken && (await gql(next.accessToken, "{ organization { code } }")).data?.organization.code === "OTH", `[${tag}] refreshSession → new access token that works, next refresh token`);
+  ok(code(await gql(null, "mutation($r: String!) { refreshSession(refreshToken: $r) { accessToken } }", { r: pair.refreshToken })) === "INVALID_TOKEN", `[${tag}] a spent refresh token → INVALID_TOKEN`);
+  ok(code(await gql(null, 'mutation { refreshSession(refreshToken: "not-a-token") { accessToken } }')) === "INVALID_TOKEN", `[${tag}] an unknown refresh token → INVALID_TOKEN`);
+  const [h, body] = next.accessToken.split(".");
+  const forged = `${h}.${Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(body, "base64url").toString()), org: a.org.id })).toString("base64url")}.${next.accessToken.split(".")[2]}`;
+  ok(code(await gql(forged, "{ organization { code } }")) === "UNAUTHENTICATED", `[${tag}] an access token with edited claims → UNAUTHENTICATED`);
+  ok((await gql(null, "mutation($r: String!) { logout(refreshToken: $r) }", { r: next.refreshToken })).data?.logout === true && code(await gql(next.accessToken, "{ organization { id } }")) === "UNAUTHENTICATED", `[${tag}] logout(refreshToken) ends the session: its access token stops at once`);
+
+  // device binding: the refresh token only works on the device that signed in
+  const phone = { deviceId: "dev-phone-0001-abcdef", fingerprint: "fp-aaaaaaaaaaaa", clientSessionId: "tab-0001-xyz", info: { platform: "Android", timezone: "Asia/Kolkata" } };
+  const bound = (await gql(null, 'mutation($d: DeviceInput) { login(input: { email: "x@oth.test", password: "Lab-Owner-2026!", device: $d }) { accessToken refreshToken } }', { d: phone })).data?.login;
+  const devices = (await gql(bound.accessToken, "{ mySessions { current deviceId deviceInfo } }")).data?.mySessions.find((x: any) => x.current);
+  ok(devices?.deviceId === phone.deviceId && devices.deviceInfo.platform === "Android", `[${tag}] login stores the device; mySessions shows it`);
+  const same = (await gql(null, "mutation($r: String!, $d: DeviceInput) { refreshSession(refreshToken: $r, device: $d) { refreshToken } }", { r: bound.refreshToken, d: { ...phone, fingerprint: "fp-bbbbbbbbbbbb" } })).data?.refreshSession;
+  ok(!!same?.refreshToken, `[${tag}] refresh on the same device (new fingerprint) works`);
+  ok(code(await gql(null, "mutation($r: String!, $d: DeviceInput) { refreshSession(refreshToken: $r, device: $d) { refreshToken } }", { r: same.refreshToken, d: { deviceId: "dev-laptop-9999-zzzzzz" } })) === "INVALID_TOKEN" && code(await gql(bound.accessToken, "{ organization { id } }")) === "UNAUTHENTICATED", `[${tag}] refresh from another device → INVALID_TOKEN and the session ends`);
+
+  // ---------------------------------------------------------------- background documents (in-process queue here; BullMQ in [worker])
+  const otherAgain = await login("x@oth.test");
+  const owner2 = await login("owner@apl.test");
+  const job = (await gql(owner2, "mutation($id: ID!) { startDocumentJob(input: { kind: invoice, invoiceId: $id }) { id state kind document { base64 } } }", { id: invoiceId })).data?.startDocumentJob;
+  ok(job?.state === "completed" && Buffer.from(job.document.base64, "base64").subarray(0, 5).toString() === "%PDF-", `[${tag}] startDocumentJob (invoice) → completed with the PDF`);
+  ok((await gql(owner2, "query($id: ID!) { job(id: $id) { state } }", { id: job.id })).data?.job.state === "completed" && (await gql(otherAgain, "query($id: ID!) { job(id: $id) { state } }", { id: job.id })).data?.job === null, `[${tag}] job(id): its owner reads it, nobody else`);
+  ok(code(await gql(otherAgain, "mutation($id: ID!) { startDocumentJob(input: { kind: invoice, invoiceId: $id }) { id } }", { id: invoiceId })) === "NOT_FOUND", `[${tag}] startDocumentJob on another organisation's invoice → NOT_FOUND`);
+  ok(code(await gql(owner2, "mutation { startDocumentJob(input: { kind: booking_reports }) { id } }")) === "BAD_USER_INPUT", `[${tag}] startDocumentJob without bookingId → BAD_USER_INPUT`);
+
   // ---------------------------------------------------------------- server guards
   ok(code(await gql(null, "{ __schema { types { name } } }")) === "GRAPHQL_VALIDATION_FAILED", `[${tag}] introspection disabled when INTROSPECTION=0`);
   const deep = `{ invoices ${"{ booking { invoice ".repeat(7)}{ id }${" } }".repeat(7)} }`;
@@ -216,12 +249,113 @@ async function fromConfig(url: string) {
   const app = await buildServer(container);
   const post = async (payload: unknown, token?: string) =>
     (await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, payload: JSON.stringify(payload) })).json() as Gql;
-  const login = await post({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { token } }' });
-  const org = await post({ query: "{ organization { code } }" }, login.data?.login.token);
+  const login = await post({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken } }' });
+  const org = await post({ query: "{ organization { code } }" }, login.data?.login.accessToken);
   ok(org.data?.organization.code === "APL", "[config] createContainer from env: own db-kit + auth-kit (memory sessions), login works");
+  await clientSdk(app);
   const pre = await app.inject({ method: "OPTIONS", url: "/graphql", headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" } });
   ok(pre.statusCode < 300 && pre.headers["access-control-allow-origin"] !== undefined, "[config] CORS preflight answered");
   await app.close();
+}
+
+/** @mgpl-diagnostics/client's session manager against this server: device signals, auto refresh, single flight, logout. */
+async function clientSdk(app: Awaited<ReturnType<typeof buildServer>>) {
+  let refreshes = 0;
+  const fetchViaInject: typeof fetch = async (_url, init) => {
+    const body = String(init?.body ?? "");
+    if (body.includes("refreshSession")) refreshes++;
+    const res = await app.inject({ method: "POST", url: "/graphql", headers: Object.fromEntries(new Headers(init?.headers).entries()), payload: body });
+    return new Response(res.body, { status: res.statusCode, headers: { "content-type": String(res.headers["content-type"] ?? "application/json") } });
+  };
+  const client = createMgplGraphQLClient({ url: "http://api.test/graphql", fetch: fetchViaInject });
+  const signedOut: string[] = [];
+  client.session.subscribe((s) => s.status === "signed_out" && signedOut.push(s.status));
+  await client.auth.login({ email: "owner@apl.test", password: "Lab-Owner-2026!" });
+  const sessions = await client.auth.sessions();
+  const mine = sessions.find((s) => s.current);
+  ok(client.session.getSnapshot().status === "signed_in" && !!mine?.deviceId && typeof mine.deviceInfo === "object", "[client] login through the SDK sends device signals; the session records them");
+  // pretend the access token is about to expire: the next calls refresh once, in parallel
+  const cur = client.session.current()!;
+  client.session.signIn({ ...cur, accessExpiresAt: new Date(Date.now() - 1000).toISOString() });
+  const orgs = await Promise.all([1, 2, 3, 4, 5].map(() => client.organization.get()));
+  ok(orgs.every((o) => o.code === "APL") && refreshes === 1 && client.session.current()!.refreshToken !== cur.refreshToken, `[client] 5 parallel calls with an expiring token → ${refreshes} refresh (single flight), new tokens`);
+  // a bad access token: UNAUTHENTICATED → one refresh → retry
+  client.session.signIn({ ...client.session.current()!, accessToken: "x.y.z" });
+  ok((await client.organization.get()).code === "APL" && refreshes === 2, "[client] UNAUTHENTICATED → refresh and retry, transparently");
+  const res = await client.session.fetch("http://api.test/graphql", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "{ organization { code } }" }) });
+  ok(((await res.json()) as Gql).data?.organization.code === "APL", "[client] session.fetch adds the token (for Apollo, urql, graphql-request, …)");
+  const refreshToken = client.session.current()!.refreshToken!;
+  await client.auth.logout();
+  ok(client.session.getSnapshot().status === "signed_out" && signedOut.length === 1 && code((await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json" }, payload: JSON.stringify({ query: "mutation($r: String!) { refreshSession(refreshToken: $r) { accessToken } }", variables: { r: refreshToken } }) })).json() as Gql) === "INVALID_TOKEN", "[client] logout ends the server session and notifies subscribers");
+}
+
+/**
+ * The worker: the API process queues jobs in Redis (BullMQ) and a worker runs them, as in production.
+ * Uses REDIS_URL, or starts `redis-server` when it is installed; skipped (with a note) otherwise.
+ */
+async function workerSuite(pgUrl: string) {
+  console.log("\n[worker]");
+  let url = process.env.REDIS_URL;
+  let server: ChildProcess | undefined;
+  if (!url) {
+    const port = 6391;
+    try {
+      server = spawn("redis-server", ["--port", String(port), "--save", "", "--appendonly", "no"], { stdio: "ignore" });
+      await new Promise<void>((resolve, reject) => {
+        server!.once("error", reject);
+        setTimeout(resolve, 400);
+      });
+      url = `redis://127.0.0.1:${port}`;
+    } catch {
+      console.log("  (skipped: set REDIS_URL or install redis-server)");
+      return;
+    }
+  }
+  const mails: { to: string; link: string }[] = [];
+  const mailer: Mailer = { passwordReset: async (to, link) => void mails.push({ to: to.email, link }) };
+  const config = loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: pgUrl, REDIS_URL: url, QUEUE_PREFIX: `mgpl-test-${process.pid}` });
+  const api = await createContainer({ config, mailer });
+  const app = await buildServer(api);
+  const worker = startWorkers(api.jobDeps, { redisUrl: url, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs, concurrency: 2 });
+  const post = async (query: string, variables?: Record<string, unknown>, token?: string) =>
+    (await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, payload: JSON.stringify({ query, variables }) })).json() as Gql;
+  const until = async <T>(fn: () => Promise<T | undefined | null | false>, ms = 20_000): Promise<T | undefined> => {
+    for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) {
+      const v = await fn();
+      if (v) return v;
+    }
+    return undefined;
+  };
+  try {
+    ok(api.jobs.mode === "bullmq", "[worker] REDIS_URL → jobs go to BullMQ");
+    const owner = (await post('mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken refreshToken } }')).data?.login;
+    const refreshed = (await post("mutation($r: String!) { refreshSession(refreshToken: $r) { accessToken } }", { r: owner?.refreshToken })).data?.refreshSession;
+    ok(!!refreshed?.accessToken, "[worker] login + refreshSession with refresh tokens in Redis");
+
+    ok((await post('mutation { requestPasswordReset(email: "owner@apl.test") }')).data?.requestPasswordReset === true, "[worker] requestPasswordReset answers at once (queued)");
+    ok(await until(async () => mails.length === 1), "[worker] the worker created the token and sent the reset link");
+    const token = new URL(mails[0]?.link ?? "/", "http://x").searchParams.get("token") ?? "";
+    const redis = new Redis(url);
+    const keys = await redis.keys(`${config.jobs.prefix}:*`);
+    const values = (await Promise.all(keys.map(async (k) => ((await redis.type(k)) === "hash" ? JSON.stringify(await redis.hgetall(k)) : (await redis.type(k)) === "string" ? await redis.get(k) : "")))).join("\n");
+    ok(token.length > 20 && !values.includes(token), `[worker] the reset token never sits in the queue (${keys.length} keys checked)`);
+    await redis.quit();
+
+    const invoiceId = (await post("{ invoices(limit: 1) { id } }", {}, refreshed.accessToken)).data?.invoices[0]?.id;
+    const started = (await post("mutation($id: ID!) { startDocumentJob(input: { kind: invoice, invoiceId: $id, format: html }) { id state } }", { id: invoiceId }, refreshed.accessToken)).data?.startDocumentJob;
+    ok(started && ["waiting", "active", "delayed"].includes(started.state), `[worker] startDocumentJob → ${started?.state}`);
+    const done = await until(async () => {
+      const j = (await post("query($id: ID!) { job(id: $id) { state attempts document { html } } }", { id: started.id }, refreshed.accessToken)).data?.job;
+      return j?.state === "completed" ? j : null;
+    });
+    ok(done?.document.html.includes("<html"), "[worker] the worker rendered the invoice; job(id) returns it");
+    const failed = (await post('mutation { startDocumentJob(input: { kind: invoice, invoiceId: "00000000-0000-4000-8000-000000000000" }) { id } }', {}, refreshed.accessToken));
+    ok(failed.errors?.[0]?.extensions?.code === "NOT_FOUND", "[worker] unknown invoice → NOT_FOUND before queueing");
+  } finally {
+    await worker.close();
+    await app.close();
+    server?.kill();
+  }
 }
 
 /** Static checks: the documented example operations stay valid against the schema. */
@@ -261,6 +395,7 @@ async function main() {
     try {
       await suite(db, "pg");
       await fromConfig(url);
+      await workerSuite(url);
     } finally {
       await db.close();
       await pg.stop();

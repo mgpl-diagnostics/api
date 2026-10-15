@@ -17,6 +17,7 @@ const objectOf = <T>(v: unknown, what: string): T => {
 /** report-kit and invoice-kit, used as internal libraries behind this one endpoint. */
 export const documentsController = withErrorCodes({
   Query: {
+    job: (_: unknown, a: { id: string }, ctx: Ctx) => ctx.services.jobs.get(actorOf(ctx), a.id),
     reportTemplates: (_: unknown, __: unknown, ctx: Ctx) => (actorOf(ctx), ctx.services.documents.templates()),
     priceList: (_: unknown, __: unknown, ctx: Ctx) => (actorOf(ctx), ctx.services.documents.priceList()),
     documentSamples: (_: unknown, __: unknown, ctx: Ctx) => (actorOf(ctx), ctx.services.documents.reportSamples()),
@@ -46,6 +47,18 @@ export const documentsController = withErrorCodes({
     bookingReportDocument: async (_: unknown, a: Opts & { bookingId: string; reportIds?: string[] | null }, ctx: Ctx) => {
       const b = await ctx.services.bookings.get(actorOf(ctx), a.bookingId);
       return ctx.services.documents.renderBookingReports(authorize(ctx, "report:read", b.branchId), a.bookingId, a.reportIds ?? null, options(a));
+    },
+  },
+  Mutation: {
+    startDocumentJob: async (_: unknown, { input: a }: { input: Opts & { kind: "invoice" | "booking_reports"; invoiceId?: string | null; bookingId?: string | null; reportIds?: string[] | null } }, ctx: Ctx) => {
+      if (a.kind === "invoice") {
+        if (!a.invoiceId) throw badInput("invoiceId is required for kind invoice");
+        const inv = await ctx.services.billing.get(actorOf(ctx), a.invoiceId);
+        return ctx.services.jobs.invoiceDocument(authorize(ctx, "invoice:read", inv.branchId), inv.id, options(a));
+      }
+      if (!a.bookingId) throw badInput("bookingId is required for kind booking_reports");
+      const b = await ctx.services.bookings.get(actorOf(ctx), a.bookingId);
+      return ctx.services.jobs.bookingReports(authorize(ctx, "report:read", b.branchId), b.id, a.reportIds ?? null, options(a));
     },
   },
   TemplateField: {

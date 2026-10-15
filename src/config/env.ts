@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 // Runtime configuration, read once from the environment. Every value has a safe development default;
 // production sets them explicitly (see docs/09-configuration.md).
 
@@ -28,6 +30,17 @@ export interface Config {
   session: { idleMs: number; maxAgeMs: number };
   /** Password-reset links point here: `${resetUrl}?token=…`. */
   resetUrl: string | null;
+  /**
+   * Access tokens (HS256 JWT) and refresh tokens. `secrets[0]` signs, every one verifies (rotation).
+   * Development without JWT_SECRET uses a random secret per process (tokens die on restart).
+   */
+  jwt: { secrets: string[]; issuer: string; accessTtlMs: number; generated: boolean };
+  /** A refresh from another device: "enforce" ends the session (default), "flag" only audits, "off" ignores. */
+  deviceBinding: "enforce" | "flag" | "off";
+  /** Background jobs (BullMQ on REDIS_URL): key prefix and how many jobs a worker runs at once. */
+  jobs: { prefix: string; concurrency: number; keepResultsMs: number };
+  /** Optional HTTP relay for emails sent by the worker: POST { to, subject, text } as JSON. */
+  mailWebhookUrl: string | null;
 }
 
 const bool = (v: string | undefined, d: boolean) => (v == null || v === "" ? d : ["1", "true", "yes", "on"].includes(v.toLowerCase()));
@@ -47,6 +60,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!url) throw new Error("DATABASE_URL is required in production");
   const corsOrigins = (env.CORS_ORIGINS ?? (dev ? "*" : "")).split(",").map((s) => s.trim()).filter(Boolean);
   if (!dev && corsOrigins.includes("*")) throw new Error('CORS_ORIGINS cannot be "*" in production');
+  const secrets = (env.JWT_SECRET ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+  if (!secrets.length && !dev) throw new Error("JWT_SECRET is required in production (at least 32 characters; comma-separate to rotate)");
+  if (secrets.some((v) => v.length < 32)) throw new Error("Every JWT_SECRET needs at least 32 characters");
+  const deviceBinding = (env.DEVICE_BINDING || "enforce") as Config["deviceBinding"];
+  if (!["enforce", "flag", "off"].includes(deviceBinding)) throw new Error(`DEVICE_BINDING must be enforce, flag or off, got "${deviceBinding}"`);
   return {
     env: mode,
     host: env.HOST ?? "0.0.0.0",
@@ -62,5 +80,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     samples: bool(env.MGPL_SAMPLES, dev),
     session: { idleMs: int(env.SESSION_IDLE_MS, 12 * 3600_000), maxAgeMs: int(env.SESSION_MAX_AGE_MS, 30 * 86400_000) },
     resetUrl: env.PASSWORD_RESET_URL || null,
+    jwt: {
+      secrets: secrets.length ? secrets : [randomBytes(32).toString("base64url")],
+      issuer: env.JWT_ISSUER || "mgpl-api",
+      accessTtlMs: int(env.ACCESS_TOKEN_TTL_MS, 15 * 60_000),
+      generated: !secrets.length,
+    },
+    deviceBinding,
+    jobs: { prefix: env.QUEUE_PREFIX || "mgpl", concurrency: Math.max(1, int(env.WORKER_CONCURRENCY, 4)), keepResultsMs: int(env.JOB_RESULT_TTL_MS, 3600_000) },
+    mailWebhookUrl: env.MAIL_WEBHOOK_URL || null,
   };
 }

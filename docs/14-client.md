@@ -13,11 +13,12 @@ flowchart LR
 ```
 
 ```ts
-import { createMgplGraphQLClient, documentBlob, printBlob, MgplGraphQLError } from "@mgpl-diagnostics/client";
+import { createMgplGraphQLClient, createSessionManager, webSessionStorage, documentBlob, printBlob } from "@mgpl-diagnostics/client";
 
-const mgpl = createMgplGraphQLClient({ url: import.meta.env.VITE_API_URL + "/graphql", onToken: saveToken, token: loadToken() });
+const session = createSessionManager({ url: import.meta.env.VITE_API_URL + "/graphql", storage: webSessionStorage() });
+const mgpl = createMgplGraphQLClient({ url: import.meta.env.VITE_API_URL + "/graphql", session });
 
-await mgpl.auth.login({ email, password, orgCode: "MGPL" });
+await mgpl.auth.login({ email, password, orgCode: "MGPL" });   // device signals added; tokens kept and refreshed
 const me = await mgpl.auth.viewer();
 const canBill = await mgpl.auth.can("invoice:create", branchId);
 
@@ -29,7 +30,10 @@ printBlob(documentBlob(doc));
 
 | Need | Method |
 |---|---|
-| Sign in / out, sessions | `auth.login`, `auth.logout`, `auth.sessions`, `auth.changePassword` |
+| Sign in / out, sessions | `auth.login`, `auth.logout`, `auth.refresh` (automatic), `auth.sessions`, `auth.changePassword` |
+| Session state in any UI library | `mgpl.session.subscribe` / `getSnapshot` / `store`, `useMgplSession` (React) |
+| TanStack Query, SWR | `mgplQuery`, `mgplMutation`, `mgplKey`, `mgplFetcher`, `clearOnSignOut` |
+| Background documents | `documents.startJob`, `documents.waitForJob` |
 | Show or hide UI by permission | `auth.viewer().permissions`, `auth.can(permission, branchId)` |
 | Result-entry form | `catalog.test(code, sex)` (parameters, units, ranges) or `documents.templates()` |
 | Live preview | `documents.renderReport(request, { format: "html" })` |
@@ -41,8 +45,25 @@ printBlob(documentBlob(doc));
 Errors arrive as `MgplGraphQLError` with `code` ([05-errors.md](05-errors.md)). The full method list is in
 the client's `docs/graphql.md`.
 
+## Sessions with any library
+
+```mermaid
+flowchart LR
+  subgraph App["Your app"]
+    UI["React · Vue · Svelte · Solid · RN"] -- "subscribe / getSnapshot" --> SM["session manager"]
+    DATA["TanStack Query · SWR"] -- "mgplQuery / mgplFetcher" --> SDK["GraphQL client"]
+    OTHER["Apollo · urql · graphql-request"] -- "fetch: session.fetch" --> SM
+    SDK --> SM
+  end
+  SM -- "Bearer access token · refreshSession (single flight, Web Locks) · device signals" --> API["api"]
+```
+
+The client's [docs/session.md](https://github.com/mgpl-diagnostics/client/blob/main/docs/session.md)
+has the details: storages, cross-tab refresh, device signals and what they contain.
+
 ## Without the SDK
 
-Any GraphQL client works (Apollo, urql, graphql-request, plain `fetch`). Send
-`Authorization: Bearer <token>` and `content-type: application/json` to `POST /graphql`. The schema is
+Any GraphQL client works. Send `Authorization: Bearer <accessToken>` and
+`content-type: application/json` to `POST /graphql`. When a request returns `UNAUTHENTICATED`, call
+`refreshSession(refreshToken, device)` once and retry; on `INVALID_TOKEN`, sign in again. The schema is
 in [schema.graphql](../schema.graphql) for code generators; introspection is off in production.

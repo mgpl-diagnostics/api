@@ -8,10 +8,12 @@ the kits, used as internal libraries. Read [docs/README.md](docs/README.md) for 
 
 ```
 src/main.ts            start (config → container → server)
+src/worker.ts          start the worker (config → container → BullMQ workers; needs REDIS_URL)
 src/server.ts          Fastify + Yoga + GET /health (no other routes)
-src/container.ts       createDb (posting: financePosting) + createAuth + services, once per process
+src/container.ts       createDb (posting: financePosting) + createAuth (JWT) + job queue + services, once per process
+src/jobs/              queues (BullMQ or in-process), job payloads, processors, webhook mailer
 src/config/env.ts      loadConfig: every environment variable
-src/graphql/           schema.ts (MODULES → buildSchema), context, guards, errors, scalars, loaders, limits
+src/graphql/           schema.ts (MODULES → buildSchema), context, guards, errors, scalars, loaders, limits, device
 src/schema/            SDL per module: base auth organization catalog lab billing books finance documents
 src/controllers/       resolvers per module: authorize → map → service
 src/services/          business calls on the kits: (actor, input), ownership checks, no GraphQL
@@ -44,7 +46,11 @@ kits.json              kit refs for `npm run kits`
     update the client (operations, types, method, docs) and bump its ref in `kits.json`.
 11. **Compliance values are configuration** verified by the lab's CA (`verifyWithCA`). Ask the owner
     before changing one. No doctor referral commissions.
-12. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
+12. **Jobs.** Permissions are checked before a job is queued; processors call services (never GraphQL);
+    job payloads carry ids and the actor, never tokens or secrets. Every job runs both on BullMQ and in-process.
+13. **Tokens.** Access tokens are auth-kit JWTs; refresh tokens and device binding live in auth-kit. Device
+    signal mapping stays in `src/graphql/device.ts` (it moves to security-kit).
+14. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
 
 ## Commands
 

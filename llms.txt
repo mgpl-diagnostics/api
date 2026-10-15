@@ -4,7 +4,8 @@
 
 Key facts for agents:
 - Layers: `src/schema` (SDL) → `src/controllers` (authorize, map) → `src/services` (kit calls) → kits. No REST routes except `GET /health`.
-- Auth: `login` returns a bearer token (auth-kit session); every request re-reads the user. Permissions are `resource:action`, checked per branch with `authorize(ctx, perm, branchId)`.
+- Auth: `login(input: { email, password, device })` returns an access JWT (15 min, Bearer) and a single-use refresh token; `refreshSession(refreshToken, device)` rotates them; a refresh from another deviceId ends the session (DEVICE_BINDING). Every request still checks the session and re-reads the user. `JWT_SECRET` required in production.
+- Worker: `src/worker.ts` (`npm run worker`) runs BullMQ jobs from Redis (`src/jobs/`): password-reset emails (MAIL_WEBHOOK_URL) and documents (`startDocumentJob`, `job(id)`). Without REDIS_URL jobs run in the API process. Permissions are `resource:action`, checked per branch with `authorize(ctx, perm, branchId)`.
 - Tenant isolation: orgId and actorId come from the session, never from arguments; every id is checked against the organisation.
 - Errors carry `extensions.code`: UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, BAD_USER_INPUT, CONFLICT, PERIOD_LOCKED, CREDIT_LIMIT_EXCEEDED, plus auth-kit codes. Unknown errors are masked.
 - Money is integer paise; days are IST "YYYY-MM-DD"; the financial year is April–March. Billing needs the branch's GST stateCode; GSTR-1/3B need the organisation's GSTIN.
@@ -24,7 +25,9 @@ Key facts for agents:
 ## Source
 
 - [src/server.ts](src/server.ts): Fastify + Yoga, one endpoint
-- [src/container.ts](src/container.ts): db, auth, services
+- [src/container.ts](src/container.ts): db, auth, job queue, services
+- [src/worker.ts](src/worker.ts): the worker entry
+- [src/jobs/](src/jobs/): queues, processors, mailer
 - [src/graphql/](src/graphql/): context, guards, errors, scalars, loaders, schema assembly
 - [src/schema/](src/schema/): SDL per module
 - [src/controllers/](src/controllers/): resolvers per module

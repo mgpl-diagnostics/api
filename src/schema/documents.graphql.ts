@@ -25,7 +25,40 @@ export const documentsTypeDefs = /* GraphQL */ `
   type PriceListEntry { code: String!, name: String!, category: String!, "rupees" rate: Float!, taxPercent: Float, hsn: String }
   type DocumentSample { id: String!, label: String!, group: String }
 
+  enum JobState { waiting active completed failed delayed }
+  enum DocumentJobKind { invoice booking_reports }
+
+  "Background work run by the worker (BullMQ on Redis), or in the API process when there is no Redis."
+  type Job {
+    id: ID!
+    kind: DocumentJobKind!
+    state: JobState!
+    "Tries so far (failed jobs are retried with back-off)."
+    attempts: Int!
+    "Why it failed (state failed)."
+    error: String
+    "The rendered document (state completed). Kept for an hour by default."
+    document: Document
+    createdAt: DateTime!
+    finishedAt: DateTime
+  }
+
+  input DocumentJobInput {
+    kind: DocumentJobKind!
+    "kind invoice"
+    invoiceId: ID
+    "kind booking_reports"
+    bookingId: ID
+    "kind booking_reports: only these reports (default: every verified or released one)"
+    reportIds: [ID!]
+    format: DocumentFormat = pdf
+    variant: ReportVariant = header
+    design: ReportDesign = sidebar
+  }
+
   extend type Query {
+    "A job you started (null when unknown, expired, or someone else's)."
+    job(id: ID!): Job
     reportTemplates: TemplateCatalog!
     "invoice-kit's sample price list (codes = report-kit template and profile ids, services, consumables)."
     priceList: [PriceListEntry!]!
@@ -45,5 +78,10 @@ export const documentsTypeDefs = /* GraphQL */ `
     invoiceDocument(invoiceId: ID!, format: DocumentFormat = pdf, variant: ReportVariant = header): Document!
     "A booking's verified or released reports, printed together (or only reportIds)."
     bookingReportDocument(bookingId: ID!, reportIds: [ID!], format: DocumentFormat = pdf, variant: ReportVariant = header, design: ReportDesign = sidebar): Document!
+  }
+
+  extend type Mutation {
+    "Renders a stored invoice or a booking's reports in the background; poll job(id) until completed or failed."
+    startDocumentJob(input: DocumentJobInput!): Job!
   }
 `;

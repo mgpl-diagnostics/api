@@ -17,6 +17,7 @@ flowchart TD
   I --> L["12 Deployment"]
   B --> M["13 Adding a feature"]
   D --> N["14 Client"]
+  B --> O["16 Worker"]
 ```
 
 | # | Page | What it answers |
@@ -26,7 +27,7 @@ flowchart TD
 | 03 | [Getting started](03-getting-started.md) | Run it locally, seed the first organisation, the first queries |
 | 04 | [API reference](04-api-reference.md) | Every query and mutation, with its permission (generated) |
 | 05 | [Errors](05-errors.md) | Error codes, masking, how clients should react |
-| 06 | [Auth and permissions](06-auth-and-permissions.md) | Sessions, roles, branch scoping, tenant isolation |
+| 06 | [Auth and permissions](06-auth-and-permissions.md) | Access + refresh tokens, device binding, roles, branch scoping, tenant isolation |
 | 07 | [Domain flows](07-domain-flows.md) | Booking → sample → report → invoice → books, with state diagrams |
 | 08 | [Documents](08-documents.md) | Report and invoice PDFs/HTML through GraphQL |
 | 09 | [Configuration](09-configuration.md) | Every environment variable |
@@ -36,5 +37,6 @@ flowchart TD
 | 13 | [Adding a feature](13-adding-a-feature.md) | Schema → controller → service → test → docs, step by step |
 | 14 | [Client](14-client.md) | Using `@mgpl-diagnostics/client` against this API |
 | 15 | [Glossary](15-glossary.md) | Lab, billing and accounting terms |
+| 16 | [Worker](16-worker.md) | Background jobs on Redis + BullMQ: emails, documents, running workers |
 | — | [examples/](examples/) | Runnable `.graphql` operations |
 | — | [LOCAL-AGENT-BRIEF.md](LOCAL-AGENT-BRIEF.md) | What a local agent (or a person) must do next, outside this repo |

@@ -11,7 +11,7 @@ Copy `.env.example` to `.env` for local work; never commit it.
 | `GRAPHQL_PATH` | `/graphql` | The one endpoint |
 | `DB_BACKEND` | `pg` | `pg` or `mongo` |
 | `DATABASE_URL` | local default in development; **required** in production | Postgres URL, or a MongoDB URI with `replicaSet=` |
-| `REDIS_URL` | empty | Sessions, reset tokens, login limits and db-kit's read cache. Required for more than one server |
+| `REDIS_URL` | empty | Sessions, refresh tokens, login limits, db-kit's read cache and the job queues (BullMQ). Required for more than one server and for the worker |
 | `CORS_ORIGINS` | `*` in development, empty in production | Comma-separated origins. `*` is refused in production |
 | `GRAPHIQL` | on in development | GraphiQL at the endpoint (GET) |
 | `INTROSPECTION` | on in development | Off adds `NoSchemaIntrospectionCustomRule` |
@@ -21,6 +21,14 @@ Copy `.env.example` to `.env` for local work; never commit it.
 | `SESSION_IDLE_MS` | `43200000` (12 h) | |
 | `SESSION_MAX_AGE_MS` | `2592000000` (30 days) | |
 | `PASSWORD_RESET_URL` | empty (`/reset-password`) | The page that receives `?token=` |
+| `JWT_SECRET` | random per process in development; **required** in production | Signs access tokens. ≥ 32 characters; `new,old` to rotate |
+| `JWT_ISSUER` | `mgpl-api` | `iss` claim, checked on every request |
+| `ACCESS_TOKEN_TTL_MS` | `900000` (15 min) | Access-token lifetime |
+| `DEVICE_BINDING` | `enforce` | Refresh from another device: `enforce` ends the session, `flag` audits, `off` ignores |
+| `QUEUE_PREFIX` | `mgpl` | BullMQ key prefix ([16-worker.md](16-worker.md)) |
+| `WORKER_CONCURRENCY` | `4` | Jobs per worker at once, per queue |
+| `JOB_RESULT_TTL_MS` | `3600000` (1 h) | How long finished jobs and their documents stay readable |
+| `MAIL_WEBHOOK_URL` | empty | Email relay for reset links: POST `{ to, subject, text }` |
 | `MGPL_SIGNATURE_HEADER_FILE` | — | PNG for the header variant (outside the repo) |
 | `MGPL_SIGNATURE_NONHEADER_FILE` | — | PNG for the non-header variant |
 | `MGPL_SIGNATURE_FILE` | — | One file for both |

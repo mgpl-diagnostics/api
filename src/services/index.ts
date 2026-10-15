@@ -10,6 +10,8 @@ import { CatalogService } from "./catalog.service";
 import { DocumentService } from "./document.service";
 import { ExportService } from "./export.service";
 import { GstService } from "./gst.service";
+import { JobService } from "./job.service";
+import type { JobQueue } from "../jobs/types";
 import { OrganizationService } from "./organization.service";
 import { PatientService } from "./patient.service";
 import { PeriodService } from "./period.service";
@@ -24,12 +26,14 @@ export interface ServiceDeps {
   resetUrl: string | null;
   lab?: LabProfile;
   samples: boolean;
+  /** The job queue (BullMQ or inline); a getter because the inline queue needs the services first. */
+  jobs: () => JobQueue;
 }
 
 /** Every service, one instance each. Services know nothing about GraphQL; controllers call them. */
 export function createServices(d: ServiceDeps) {
   return {
-    auth: new AuthService(d.repos, d.auth, { mailer: d.mailer, resetUrl: d.resetUrl }),
+    auth: new AuthService(d.repos, d.auth, { mailer: d.mailer, resetUrl: d.resetUrl, jobs: d.jobs }),
     organization: new OrganizationService(d.repos),
     catalog: new CatalogService(),
     patients: new PatientService(d.repos),
@@ -44,6 +48,7 @@ export function createServices(d: ServiceDeps) {
     periods: new PeriodService(d.repos),
     exports: new ExportService(d.repos),
     documents: new DocumentService(d.repos, { lab: d.lab, samples: d.samples }),
+    jobs: new JobService(d.repos, d.jobs),
   };
 }
 

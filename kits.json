@@ -7,7 +7,7 @@
     },
     {
       "name": "auth-kit",
-      "ref": "v1.0.0"
+      "ref": "1ed4fdbae61c785fb1fd6188dc5298b79dc44d94"
     },
     {
       "name": "db-kit",
@@ -23,7 +23,7 @@
     },
     {
       "name": "client",
-      "ref": "d973de38d278e5047f9591d7171431be37d045d9"
+      "ref": "8961047f49d607673e0ad72509c4524b104f340c"
     },
     {
       "name": "invoice-kit",

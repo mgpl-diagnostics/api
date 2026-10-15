@@ -524,6 +524,30 @@ scalar DateTime
 """Calendar day in IST, YYYY-MM-DD"""
 scalar Day
 
+"""
+Security signals the client sends with login and refreshSession (the client SDK collects them).
+All optional; malformed values are dropped. See docs/06-authentication.md.
+"""
+input DeviceInput {
+  """Random id per tab or app run."""
+  clientSessionId: String
+
+  """
+  Random id the client keeps per browser profile or app install (8-128 of A-Z a-z 0-9 _ . : + / = -).
+  """
+  deviceId: String
+
+  """
+  Client-side hash of stable device attributes. A change is logged, never blocked.
+  """
+  fingerprint: String
+
+  """
+  Descriptive values: at most 20 keys, short strings, numbers or booleans.
+  """
+  info: JSON
+}
+
 type DocSeries {
   cancelled: Int!
   from: String!
@@ -574,6 +598,28 @@ type Document {
 enum DocumentFormat {
   html
   pdf
+}
+
+input DocumentJobInput {
+  """kind booking_reports"""
+  bookingId: ID
+  design: ReportDesign = sidebar
+  format: DocumentFormat = pdf
+
+  """kind invoice"""
+  invoiceId: ID
+  kind: DocumentJobKind!
+
+  """
+  kind booking_reports: only these reports (default: every verified or released one)
+  """
+  reportIds: [ID!]
+  variant: ReportVariant = header
+}
+
+enum DocumentJobKind {
+  booking_reports
+  invoice
 }
 
 type DocumentSample {
@@ -785,6 +831,33 @@ enum ItemCategory {
 """Any JSON value"""
 scalar JSON
 
+"""
+Background work run by the worker (BullMQ on Redis), or in the API process when there is no Redis.
+"""
+type Job {
+  """Tries so far (failed jobs are retried with back-off)."""
+  attempts: Int!
+  createdAt: DateTime!
+
+  """The rendered document (state completed). Kept for an hour by default."""
+  document: Document
+
+  """Why it failed (state failed)."""
+  error: String
+  finishedAt: DateTime
+  id: ID!
+  kind: DocumentJobKind!
+  state: JobState!
+}
+
+enum JobState {
+  active
+  completed
+  delayed
+  failed
+  waiting
+}
+
 type Ledger {
   active: Boolean!
 
@@ -840,6 +913,7 @@ input LockDateInput {
 }
 
 input LoginInput {
+  device: DeviceInput
   email: String!
 
   """Only when the same email exists in several organisations."""
@@ -847,13 +921,33 @@ input LoginInput {
   password: String!
 }
 
+"""
+Tokens after login or refresh. Send the access token as 'Authorization: Bearer <accessToken>'; when
+it expires (UNAUTHENTICATED), trade the refresh token for a new pair with refreshSession.
+"""
 type LoginResult {
-  expiresAt: DateTime!
+  accessExpiresAt: DateTime!
 
   """
-  Send as 'Authorization: Bearer <token>'. Shown once; the server stores only its SHA-256.
+  Short-lived HS256 JWT (default 15 minutes). Every request still checks the session and re-reads the user.
   """
-  token: String!
+  accessToken: String!
+
+  """Same as accessExpiresAt."""
+  expiresAt: DateTime! @deprecated(reason: "Use accessExpiresAt.")
+
+  """
+  Slides with each refresh (idle window), never past the session's maximum age.
+  """
+  refreshExpiresAt: DateTime!
+
+  """
+  Opaque and single-use: refreshSession returns the next one. The server stores only its SHA-256.
+  """
+  refreshToken: String!
+
+  """Same as accessToken."""
+  token: String! @deprecated(reason: "Use accessToken.")
   user: User!
 }
 
@@ -889,8 +983,10 @@ type Mutation {
   issueInvoice(input: IssueInvoiceInput!): Invoice!
   login(input: LoginInput!): LoginResult!
 
-  """Ends this session."""
-  logout: Boolean!
+  """
+  Ends this session: the bearer token (even an expired access token), or the refresh token when given.
+  """
+  logout(refreshToken: String): Boolean!
 
   """Ends every other session of the signed-in user; returns how many."""
   logoutOtherSessions: Int!
@@ -903,13 +999,21 @@ type Mutation {
   receiveSample(id: ID!): Sample!
   reconcileBank(ledgerId: ID!, statementId: ID): ReconcileResult!
   recordPayment(invoiceId: ID!, payment: PaymentInput!): Invoice!
+
+  """
+  Spends a refresh token and returns a new access token and the next refresh token. A refresh token
+  used twice ends its session (it was copied); within a few seconds (two tabs) the second use only fails.
+  Send the same device as at login: a refresh from another device id ends the session (DEVICE_BINDING).
+  INVALID_TOKEN when it is unknown, spent or expired: sign in again.
+  """
+  refreshSession(device: DeviceInput, refreshToken: String!): LoginResult!
   refundPayment(invoiceId: ID!, payment: PaymentInput!): Invoice!
   registerPatient(input: RegisterPatientInput!): Patient!
   rejectSample(id: ID!, reason: String!): Sample!
   releaseReport(id: ID!): Report!
 
   """
-  Always true (never reveals whether the email exists). The link is sent by the server's mailer.
+  Always true (never reveals whether the email exists). Queued: the worker creates the single-use token and mails the link.
   """
   requestPasswordReset(email: String!, orgCode: String): Boolean!
   resetPassword(newPassword: String!, token: String!): Boolean!
@@ -929,6 +1033,11 @@ type Mutation {
   Seeds the standard chart (28 groups, default ledgers) and finance-kit's ledgers. Idempotent.
   """
   setupChartOfAccounts: [Ledger!]!
+
+  """
+  Renders a stored invoice or a booking's reports in the background; poll job(id) until completed or failed.
+  """
+  startDocumentJob(input: DocumentJobInput!): Job!
   updateBranch(id: ID!, input: BranchPatch!): Branch!
   updateCustomer(id: ID!, input: CustomerPatch!): Customer!
   updateDoctor(id: ID!, input: DoctorPatch!): Doctor!
@@ -1251,6 +1360,9 @@ type Query {
   """
   invoiceTotals(request: JSON!): JSON!
   invoices(branchId: ID, customerId: ID, limit: Int = 50, offset: Int = 0, patientId: ID, status: InvoiceStatus): [Invoice!]!
+
+  """A job you started (null when unknown, expired, or someone else's)."""
+  job(id: ID!): Job
   ledger(id: ID!): Ledger
   ledgerStatement(branchId: ID, from: DateTime!, ledgerId: ID!, to: DateTime!): LedgerStatement!
   ledgers: [Ledger!]!
@@ -1480,6 +1592,16 @@ enum SampleStatus {
 type Session {
   createdAt: DateTime!
   current: Boolean!
+
+  """
+  The device id sent at sign-in: refresh tokens of this session work only there.
+  """
+  deviceId: String
+
+  """
+  The latest device description the client sent (platform, language, timezone, screen, …).
+  """
+  deviceInfo: JSON
   expiresAt: DateTime!
   id: ID!
   ip: String
