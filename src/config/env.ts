@@ -23,7 +23,8 @@ export interface Config {
   /** Largest request body, bytes. */
   bodyLimit: number;
   /** Behind a proxy (nginx, a load balancer): read the client IP from X-Forwarded-For. */
-  trustProxy: boolean;
+  /** Reverse proxies in front of the API that append to X-Forwarded-For (TRUST_PROXY). 0 = use the socket address. */
+  trustedHops: number;
   /** Demo report and invoice samples (report-kit / invoice-kit) in `documents`. */
   samples: boolean;
   /** Session lifetime knobs, passed to auth-kit. */
@@ -70,6 +71,14 @@ const int = (v: string | undefined, d: number) => {
   return n;
 };
 
+/** TRUST_PROXY: "false"/"0" (default), "true" (= 1 proxy), or the number of proxies (CDN + load balancer = 2). */
+function hops(v: string | undefined): number {
+  if (v === undefined || v === "") return 0;
+  if (/^(true|yes|on)$/i.test(v)) return 1;
+  if (/^(false|no|off)$/i.test(v)) return 0;
+  return int(v, 0);
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const mode = env.NODE_ENV === "production" ? "production" : env.NODE_ENV === "test" ? "test" : "development";
   const dev = mode !== "production";
@@ -98,7 +107,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     graphiql: bool(env.GRAPHIQL, dev),
     introspection: bool(env.INTROSPECTION, dev),
     bodyLimit: int(env.BODY_LIMIT_BYTES, 2_000_000),
-    trustProxy: bool(env.TRUST_PROXY, false),
+    trustedHops: hops(env.TRUST_PROXY),
     samples: bool(env.MGPL_SAMPLES, dev),
     session: { idleMs: int(env.SESSION_IDLE_MS, 12 * 3600_000), maxAgeMs: int(env.SESSION_MAX_AGE_MS, 30 * 86400_000) },
     resetUrl: env.PASSWORD_RESET_URL || null,

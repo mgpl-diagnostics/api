@@ -1,5 +1,5 @@
-// Device signals (DeviceInput) → auth-kit's DeviceSignals. Kept in one module so it can move to
-// security-kit later. auth-kit cleans and caps the values (cleanDeviceSignals); this only maps shapes.
+// Device signals (DeviceInput, collected in the client by @mgpl-diagnostics/security-kit) → auth-kit's
+// DeviceSignals. auth-kit cleans and caps the values (cleanDeviceSignals); this only maps shapes.
 import type { DeviceSignals } from "@mgpl-diagnostics/auth-kit";
 
 export interface DeviceInput {

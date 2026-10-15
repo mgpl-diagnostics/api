@@ -60,13 +60,13 @@ any client may send them.
 | Field | What it is | Server use |
 |---|---|---|
 | `deviceId` | random id kept by the client per browser profile or install | stored at login; a refresh from another `deviceId` → `INVALID_TOKEN`, the session ends, audit `auth.device_mismatch` (`DEVICE_BINDING=flag` only audits) |
-| `fingerprint` | client-side SHA-256 of the `info` values | a change is audited (`auth.fingerprint_changed`), never blocked |
+| `fingerprint` | client-side SHA-256 of coarse device attributes (security-kit) | a change is audited (`auth.fingerprint_changed`), never blocked |
 | `clientSessionId` | random id per tab or app run | stored (latest) |
-| `info` | platform, language, timezone, screen, cores, memory, touch points, user agent | stored (latest), shown in `mySessions.deviceInfo` |
+| `info` | os, browser, major browser version, mobile, language, timezone, screen (client 1.3.0+; older clients sent platform, cores, memory, touch points and the user agent) | stored (latest), shown in `mySessions.deviceInfo` |
 
 Values are untrusted: auth-kit's `cleanDeviceSignals` keeps ids of 8–128 safe characters and at most
 20 short `info` values. A session that signed in without a `deviceId` is bound by its first refresh that
-sends one. The mapping lives in `src/graphql/device.ts` alone, ready to move to security-kit. `changePassword`
+sends one. The client collects the signals with [security-kit](https://github.com/mgpl-diagnostics/security-kit); `src/graphql/device.ts` maps them to auth-kit. `changePassword`
 ends the user's other sessions; `resetPassword`, an administrator's `setUserPassword` and `disableUser`
 end all of them.
 

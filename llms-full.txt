@@ -215,7 +215,7 @@ the kits, used as internal libraries. Read [docs/README.md](docs/README.md) for 
 ```
 src/main.ts            start (config → container → server)
 src/worker.ts          start the worker (config → container → BullMQ workers; needs REDIS_URL)
-src/server.ts          Fastify + Yoga + GET /health (no other routes)
+src/server.ts          Fastify + Yoga + GET /health (no other routes); security-kit headers and client IP
 src/container.ts       createDb (posting: financePosting) + createAuth (JWT) + job queue + services, once per process
 src/jobs/              queues (BullMQ or in-process), job payloads, processors, webhook mailer
 src/config/env.ts      loadConfig: every environment variable
@@ -255,7 +255,9 @@ kits.json              kit refs for `npm run kits` (building unreleased kit bran
 12. **Jobs.** Permissions are checked before a job is queued; processors call services (never GraphQL);
     job payloads carry ids and the actor, never tokens or secrets. Every job runs both on BullMQ and in-process.
 13. **Tokens.** Access tokens are auth-kit JWTs; refresh tokens and device binding live in auth-kit. Device
-    signal mapping stays in `src/graphql/device.ts` (it moves to security-kit).
+    signals are collected by security-kit in the client; `src/graphql/device.ts` maps DeviceInput to auth-kit.
+    Security headers and the client IP come from security-kit's `fastifySecurity` (never Fastify's own
+    `req.ip` with a trust-all proxy setting: the left X-Forwarded-For entry is client-controlled).
 14. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
 
 ## Commands
@@ -318,6 +320,7 @@ service layer.
 | [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | Invoice PDFs and HTML, invoice arithmetic |
 | [ledger-kit](https://github.com/mgpl-diagnostics/ledger-kit) | Our own double-entry engine: ledgers, vouchers, books reports |
 | [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | GST, GSTR-1/3B data, receivables, settlements, cash and bank, lock dates, exports |
+| [security-kit](https://github.com/mgpl-diagnostics/security-kit) | Security headers on every response, the client IP behind proxies (`TRUST_PROXY`); in the client, the device signals |
 | [client](https://github.com/mgpl-diagnostics/client) | Not used by the API; the frontend SDK that calls it |
 
 ## Design choices
@@ -422,7 +425,7 @@ src/
     scalars.ts          DateTime, Day, JSON
     loaders.ts          per-request BatchLoader per entity (no N+1)
     limits.ts           depthLimit
-    device.ts           DeviceInput → auth-kit DeviceSignals (moves to security-kit later)
+    device.ts           DeviceInput (collected by security-kit in the client) → auth-kit DeviceSignals
   jobs/
     types.ts            QUEUES, job payloads, JobInfo, JobQueue, JobFailure
     processors.ts       password-reset, document rendering (call services)
@@ -955,13 +958,13 @@ any client may send them.
 | Field | What it is | Server use |
 |---|---|---|
 | `deviceId` | random id kept by the client per browser profile or install | stored at login; a refresh from another `deviceId` → `INVALID_TOKEN`, the session ends, audit `auth.device_mismatch` (`DEVICE_BINDING=flag` only audits) |
-| `fingerprint` | client-side SHA-256 of the `info` values | a change is audited (`auth.fingerprint_changed`), never blocked |
+| `fingerprint` | client-side SHA-256 of coarse device attributes (security-kit) | a change is audited (`auth.fingerprint_changed`), never blocked |
 | `clientSessionId` | random id per tab or app run | stored (latest) |
-| `info` | platform, language, timezone, screen, cores, memory, touch points, user agent | stored (latest), shown in `mySessions.deviceInfo` |
+| `info` | os, browser, major browser version, mobile, language, timezone, screen (client 1.3.0+; older clients sent platform, cores, memory, touch points and the user agent) | stored (latest), shown in `mySessions.deviceInfo` |
 
 Values are untrusted: auth-kit's `cleanDeviceSignals` keeps ids of 8–128 safe characters and at most
 20 short `info` values. A session that signed in without a `deviceId` is bound by its first refresh that
-sends one. The mapping lives in `src/graphql/device.ts` alone, ready to move to security-kit. `changePassword`
+sends one. The client collects the signals with [security-kit](https://github.com/mgpl-diagnostics/security-kit); `src/graphql/device.ts` maps them to auth-kit. `changePassword`
 ends the user's other sessions; `resetPassword`, an administrator's `setUserPassword` and `disableUser`
 end all of them.
 
@@ -1349,7 +1352,7 @@ variables already set in the real environment win over the file.
 | `GRAPHIQL` | on in development | GraphiQL at the endpoint (GET) |
 | `INTROSPECTION` | on in development | Off adds `NoSchemaIntrospectionCustomRule` |
 | `BODY_LIMIT_BYTES` | `2000000` | Request body limit (bank CSV imports count) |
-| `TRUST_PROXY` | `false` | `true` behind a load balancer, so login limits see the client IP |
+| `TRUST_PROXY` | `false` | How many proxies in front of the API append to `X-Forwarded-For`: `true` = 1 (a load balancer), `2` for CDN + load balancer. Login limits and sessions then see the client IP; entries left of the trusted proxies (which any client can send) are ignored |
 | `MGPL_SAMPLES` | on in development | Demo report/invoice samples in `documents` |
 | `SESSION_IDLE_MS` | `43200000` (12 h) | |
 | `SESSION_MAX_AGE_MS` | `2592000000` (30 days) | |
@@ -1587,7 +1590,7 @@ report-kit's resvg is a native module: build the image on the same platform it r
 | ☐ | At least one worker running (`node dist/worker.js`) with `SMTP_URL` and `MAIL_FROM` set |
 | ☐ | `CORS_ORIGINS` lists exactly the app origins (no `*`) |
 | ☐ | `GRAPHIQL` and `INTROSPECTION` off (the defaults in production) |
-| ☐ | `TRUST_PROXY=true` behind the load balancer (login limits use the client IP) |
+| ☐ | `TRUST_PROXY=true` behind one load balancer, `TRUST_PROXY=2` behind a CDN plus a load balancer (login limits use the client IP) |
 | ☐ | `MGPL_SAMPLES` off (the default in production) |
 | ☐ | Signature files mounted read-only; `MGPL_SIGNATURE_*_FILE` point at them |
 | ☐ | `PASSWORD_RESET_URL` points at the app's reset page, and a mailer is wired (below) |
@@ -2143,8 +2146,9 @@ Added after the first release (auth-kit 1.2.0, client 1.2.0, api with JWT and th
   signed out, switch to `DEVICE_BINDING=flag` and read the `auth.device_mismatch` audit entries first.
 - **Privacy notice.** The client sends device signals (list in the client's `docs/session.md`); add
   them to the lab's privacy notice before going live.
-- **security-kit.** The device-signal code is self-contained (`client/src/graphql/device.ts`,
-  `api/src/graphql/device.ts`, auth-kit's `cleanDeviceSignals`) so it can move to security-kit.
+- **security-kit.** The client collects device signals with security-kit, and the api uses it for
+  security headers and the client IP. Publish it (see the shared brief's security-kit step), then switch
+  the client's git dev dependency on it to `^0.2.0`.
 
 Done when: a login survives an access-token expiry without the user noticing, a reset email arrives,
 and `startDocumentJob` completes with a worker running.
@@ -2224,6 +2228,10 @@ flowchart TD
 {
   "$comment": "Kit sources for `npm run kits`: builds each kit from github.com/mgpl-diagnostics/<name> at `ref` (a tag or commit), for testing unreleased kit branches locally (KITS_SRC for local checkouts). CI and normal installs use the published packages on GitHub Packages.",
   "kits": [
+    {
+      "name": "security-kit",
+      "ref": "v0.2.0"
+    },
     {
       "name": "mail-kit",
       "ref": "v0.1.0"
@@ -2344,6 +2352,7 @@ Key facts for agents:
     "@mgpl-diagnostics/ledger-kit": "^0.1.0",
     "@mgpl-diagnostics/mail-kit": "^0.1.0",
     "@mgpl-diagnostics/report-kit": "^2.0.0",
+    "@mgpl-diagnostics/security-kit": "^0.2.0",
     "bullmq": "^5.81.5",
     "fastify": "^5.12.7",
     "graphql": "^16.14.0",
@@ -4572,7 +4581,8 @@ export interface Config {
   /** Largest request body, bytes. */
   bodyLimit: number;
   /** Behind a proxy (nginx, a load balancer): read the client IP from X-Forwarded-For. */
-  trustProxy: boolean;
+  /** Reverse proxies in front of the API that append to X-Forwarded-For (TRUST_PROXY). 0 = use the socket address. */
+  trustedHops: number;
   /** Demo report and invoice samples (report-kit / invoice-kit) in `documents`. */
   samples: boolean;
   /** Session lifetime knobs, passed to auth-kit. */
@@ -4619,6 +4629,14 @@ const int = (v: string | undefined, d: number) => {
   return n;
 };
 
+/** TRUST_PROXY: "false"/"0" (default), "true" (= 1 proxy), or the number of proxies (CDN + load balancer = 2). */
+function hops(v: string | undefined): number {
+  if (v === undefined || v === "") return 0;
+  if (/^(true|yes|on)$/i.test(v)) return 1;
+  if (/^(false|no|off)$/i.test(v)) return 0;
+  return int(v, 0);
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const mode = env.NODE_ENV === "production" ? "production" : env.NODE_ENV === "test" ? "test" : "development";
   const dev = mode !== "production";
@@ -4647,7 +4665,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     graphiql: bool(env.GRAPHIQL, dev),
     introspection: bool(env.INTROSPECTION, dev),
     bodyLimit: int(env.BODY_LIMIT_BYTES, 2_000_000),
-    trustProxy: bool(env.TRUST_PROXY, false),
+    trustedHops: hops(env.TRUST_PROXY),
     samples: bool(env.MGPL_SAMPLES, dev),
     session: { idleMs: int(env.SESSION_IDLE_MS, 12 * 3600_000), maxAgeMs: int(env.SESSION_MAX_AGE_MS, 30 * 86400_000) },
     resetUrl: env.PASSWORD_RESET_URL || null,
@@ -5544,8 +5562,8 @@ export async function createContext(container: Container, req: { headers: Header
 ## File: src/graphql/device.ts
 
 ```ts
-// Device signals (DeviceInput) → auth-kit's DeviceSignals. Kept in one module so it can move to
-// security-kit later. auth-kit cleans and caps the values (cleanDeviceSignals); this only maps shapes.
+// Device signals (DeviceInput, collected in the client by @mgpl-diagnostics/security-kit) → auth-kit's
+// DeviceSignals. auth-kit cleans and caps the values (cleanDeviceSignals); this only maps shapes.
 import type { DeviceSignals } from "@mgpl-diagnostics/auth-kit";
 
 export interface DeviceInput {
@@ -7300,12 +7318,16 @@ export const organizationTypeDefs = /* GraphQL */ `
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { NoSchemaIntrospectionCustomRule } from "graphql";
 import { createYoga, type Plugin } from "graphql-yoga";
+import { API_CSP, fastifySecurity, type RequestSecurity } from "@mgpl-diagnostics/security-kit/server";
 import type { Container } from "./container";
 import { createContext, type RequestContext } from "./graphql/context";
 import { depthLimit } from "./graphql/limits";
 import { buildSchema } from "./graphql/schema";
 
 type ServerContext = { req: FastifyRequest; reply: FastifyReply };
+
+/** What fastifySecurity put on the request (falls back to the socket address). */
+const securityOf = (req: FastifyRequest): Pick<RequestSecurity, "ip"> => (req as FastifyRequest & { security?: RequestSecurity | null }).security ?? { ip: req.ip };
 
 /** Validation rules on every operation: depth limit, and no introspection unless enabled. */
 function rules(introspection: boolean): Plugin {
@@ -7323,7 +7345,17 @@ function rules(introspection: boolean): Plugin {
  */
 export async function buildServer(container: Container): Promise<FastifyInstance> {
   const { config } = container;
-  const app = Fastify({ logger: config.env === "production" ? { level: "info" } : config.env === "test" ? false : { level: "warn" }, bodyLimit: config.bodyLimit, trustProxy: config.trustProxy });
+  const app = Fastify({ logger: config.env === "production" ? { level: "info" } : config.env === "test" ? false : { level: "warn" }, bodyLimit: config.bodyLimit, trustProxy: (_addr: string, hop: number) => hop < config.trustedHops });
+
+  // security-kit: security headers on every response, and request.security = { ip, userAgent, … } with the
+  // client IP taken from X-Forwarded-For only through the configured number of proxies (TRUST_PROXY).
+  // CORS stays with Yoga below. GraphiQL (development) loads scripts, so it gets no CSP.
+  await app.register(
+    fastifySecurity({
+      headers: { hsts: config.env === "production" ? 31_536_000 : false, csp: config.graphiql ? false : API_CSP },
+      trustedHops: config.trustedHops,
+    }),
+  );
 
   const yoga = createYoga<ServerContext, RequestContext>({
     schema: buildSchema(),
@@ -7335,7 +7367,7 @@ export async function buildServer(container: Container): Promise<FastifyInstance
     cors: { origin: config.corsOrigins.includes("*") ? "*" : config.corsOrigins, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["content-type", "authorization"] },
     logging: config.env === "test" ? false : "warn",
     plugins: [rules(config.introspection)],
-    context: ({ request, req }) => createContext(container, { headers: request.headers, ip: req.ip }),
+    context: ({ request, req }) => createContext(container, { headers: request.headers, ip: securityOf(req).ip ?? undefined }),
   });
 
   app.route({
@@ -9273,7 +9305,23 @@ async function fromConfig(url: string) {
   await clientSdk(app);
   const pre = await app.inject({ method: "OPTIONS", url: "/graphql", headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" } });
   ok(pre.statusCode < 300 && pre.headers["access-control-allow-origin"] !== undefined, "[config] CORS preflight answered");
+  const res = await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json" }, payload: JSON.stringify({ query: "{ health { ok } }" }) });
+  ok(res.headers["x-content-type-options"] === "nosniff" && res.headers["x-frame-options"] === "DENY" && res.headers["referrer-policy"] === "no-referrer", "[config] security-kit headers on GraphQL responses");
+  ok((await app.inject({ url: "/health" })).headers["x-content-type-options"] === "nosniff", "[config] security-kit headers on /health");
   await app.close();
+
+  // client IP: X-Forwarded-For counts only through TRUST_PROXY proxies, so a client cannot choose its IP
+  const sessionIp = async (env: Record<string, string>) => {
+    const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, ...env }) });
+    const s = await buildServer(c);
+    const headers = { "content-type": "application/json", "x-forwarded-for": "6.6.6.6, 203.0.113.9" };
+    const r = (await s.inject({ method: "POST", url: "/graphql", headers, payload: JSON.stringify({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken } }' }) })).json() as Gql;
+    const me = (await s.inject({ method: "POST", url: "/graphql", headers: { ...headers, authorization: `Bearer ${r.data?.login.accessToken}` }, payload: JSON.stringify({ query: "{ mySessions { current ip } }" }) })).json() as Gql;
+    await s.close();
+    return me.data?.mySessions.find((x: any) => x.current)?.ip as string | undefined;
+  };
+  ok((await sessionIp({ TRUST_PROXY: "1" })) === "203.0.113.9", "[config] TRUST_PROXY=1: the IP the load balancer saw, never the spoofed left entry");
+  ok((await sessionIp({})) === "127.0.0.1", "[config] no TRUST_PROXY: X-Forwarded-For is ignored");
 }
 
 /** @mgpl-diagnostics/client's session manager against this server: device signals, auto refresh, single flight, logout. */
