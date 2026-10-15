@@ -50,7 +50,7 @@ flowchart LR
 
 ```bash
 npm ci                             # kits from GitHub Packages; NODE_AUTH_TOKEN with read:packages (docs/03)
-cp .env.example .env               # DATABASE_URL, …
+cp .env.example .env               # every variable documented; SMTP_URL / MAIL_FROM for mail
 SEED_ORG_NAME=… SEED_ORG_CODE=MGPL SEED_BRANCH_CODE=ARG01 SEED_BRANCH_NAME=Arang SEED_BRANCH_STATE=22 \
 SEED_OWNER_NAME=… SEED_OWNER_EMAIL=… SEED_OWNER_PASSWORD=… npm run seed
 npm run dev                        # http://localhost:4000/graphql

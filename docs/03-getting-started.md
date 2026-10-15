@@ -22,8 +22,13 @@ Every kit is published to GitHub Packages, so this is all you need. To test **un
 ## 2. Configure
 
 ```bash
-cp .env.example .env   # then edit DATABASE_URL etc.; see 09-configuration.md
+cp .env.example .env   # every variable, commented; the defaults run locally as they are
 ```
+
+`.env` is loaded automatically by `npm run dev`, `npm run worker:dev` and `npm run seed`. Edit
+`DATABASE_URL` for your database; to send password-reset mail locally, set `SMTP_URL` and `MAIL_FROM`
+(the Mail section of `.env.example` has examples for common providers). See
+[09-configuration.md](09-configuration.md).
 
 ## 3. Seed the first organisation
 

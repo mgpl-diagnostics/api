@@ -57,7 +57,8 @@ report-kit's resvg is a native module: build the image on the same platform it r
 
 ## Sending password-reset emails
 
-Set `SMTP_URL` and `MAIL_FROM`. The worker (or the API, without Redis) sends the mail with
+Set `SMTP_URL` and `MAIL_FROM` (the Mail section of [`.env.example`](../.env.example) shows the URL form
+for Gmail, Zoho, Amazon SES and Brevo; URL-encode the user and password). The worker (or the API, without Redis) sends the mail with
 [mail-kit](https://github.com/mgpl-diagnostics/mail-kit): the "password-reset" mail is written in its mail
 design language and goes out as HTML plus plain text, in the lab's brand (name, address, phone from
 report-kit's lab profile). Any SMTP provider works (Gmail or Zoho app passwords, Amazon SES, Brevo);

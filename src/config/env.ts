@@ -49,6 +49,20 @@ export interface Config {
   mailWebhookUrl: string | null;
 }
 
+/**
+ * Loads `.env` from the working directory into `process.env`, if the file exists. Variables already set
+ * in the environment win over the file. Called by `main.ts`, `worker.ts` and `scripts/seed.ts`; an app
+ * that embeds the API configures its own environment.
+ */
+export function loadEnvFile(path = ".env"): void {
+  if (typeof process.loadEnvFile !== "function") return; // Node < 20.12: export the variables instead
+  try {
+    process.loadEnvFile(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+}
+
 const bool = (v: string | undefined, d: boolean) => (v == null || v === "" ? d : ["1", "true", "yes", "on"].includes(v.toLowerCase()));
 const int = (v: string | undefined, d: number) => {
   if (v == null || v === "") return d;

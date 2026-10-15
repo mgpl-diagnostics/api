@@ -1,7 +1,13 @@
 # 09 · Configuration
 
 All configuration comes from environment variables, read once by `loadConfig()` (`src/config/env.ts`).
-Copy `.env.example` to `.env` for local work; never commit it.
+[`.env.example`](../.env.example) lists every one of them, grouped by area, with what it does, whether it
+is required in production and whether it is a secret. Copy it to `.env` (git-ignored; never commit it).
+`npm run dev`, `npm start`, `npm run worker` and `npm run seed` load `.env` from the working directory;
+variables already set in the real environment win over the file.
+
+**Where mail is configured:** `SMTP_URL` (`smtps://user:pass@host:465` or `smtp://user:pass@host:587`) and
+`MAIL_FROM`. See [Sending password-reset emails](12-deployment.md#sending-password-reset-emails).
 
 | Variable | Default | Notes |
 |---|---|---|
