@@ -28,6 +28,7 @@
     "@mgpl-diagnostics/db-kit": "^1.1.0",
     "@mgpl-diagnostics/finance-kit": "^1.0.0",
     "@mgpl-diagnostics/invoice-kit": "^2.0.0",
+    "@mgpl-diagnostics/mail-kit": "^0.1.0",
     "@mgpl-diagnostics/report-kit": "^2.0.0",
     "@mgpl-diagnostics/tally-kit": "^0.1.0",
     "bullmq": "^5.81.5",

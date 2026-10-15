@@ -237,7 +237,7 @@ kits.json              kit refs for `npm run kits`
 2. **Layers.** Schema → controller → service → kit. Controllers check permissions and map; services hold
    the logic and never import GraphQL; storage changes go to db-kit, finance rules to finance-kit,
    posting to tally-kit, permissions to auth-kit, catalog data to catalog-kit, layouts to report-kit /
-   invoice-kit.
+   invoice-kit, mail designs to mail-kit (written in its mail design language, never HTML).
 3. **Tenant isolation.** No argument carries an `orgId` or `actorId`. They come from the session
    (`actorOf`). Every id is checked against the organisation (`mustOwn`, `owned`, `scopedFind`).
 4. **Permissions per branch.** Load a record, then `authorize(ctx, perm, record.branchId)`; lists use
@@ -428,7 +428,7 @@ src/
     processors.ts       password-reset, document rendering (call services)
     bullmq.ts           createBullJobQueue (producer), startWorkers (consumer)
     inline.ts           createInlineJobQueue (no Redis: runs at once in this process)
-    mailer.ts           webhookMailer (MAIL_WEBHOOK_URL)
+    mailer.ts           mailerFromConfig: mail-kit over SMTP_URL (mailKitMailer), else webhookMailer (MAIL_WEBHOOK_URL)
   schema/<module>.graphql.ts      SDL
   controllers/<module>.controller.ts
   services/<area>.service.ts, index.ts (createServices), util.ts
@@ -963,8 +963,8 @@ end all of them.
 
 `requestPasswordReset(email, orgCode?)` always returns `true`, whether or not the account exists, and
 only queues a job. The worker ([16-worker.md](16-worker.md)), or the API itself without Redis, creates
-the token and sends `PASSWORD_RESET_URL?token=…` through the `Mailer` (`MAIL_WEBHOOK_URL`, or
-`createContainer({ config, mailer })`). The token is never returned by the API and never stored raw.
+the token and sends `PASSWORD_RESET_URL?token=…` through the `Mailer` (mail-kit over `SMTP_URL`,
+`MAIL_WEBHOOK_URL`, or `createContainer({ config, mailer })`). The token is never returned by the API and never stored raw.
 `resetPassword(token, newPassword)` consumes it once.
 
 ## Permissions
@@ -1349,7 +1349,9 @@ Copy `.env.example` to `.env` for local work; never commit it.
 | `QUEUE_PREFIX` | `mgpl` | BullMQ key prefix ([16-worker.md](16-worker.md)) |
 | `WORKER_CONCURRENCY` | `4` | Jobs per worker at once, per queue |
 | `JOB_RESULT_TTL_MS` | `3600000` (1 h) | How long finished jobs and their documents stay readable |
-| `MAIL_WEBHOOK_URL` | empty | Email relay for reset links: POST `{ to, subject, text }` |
+| `SMTP_URL` | empty | Mail through mail-kit: `smtps://user:pass@host:465` (TLS) or `smtp://user:pass@host:587` (STARTTLS). Preferred over `MAIL_WEBHOOK_URL` |
+| `MAIL_FROM` | — (required with `SMTP_URL` in production) | Sender, e.g. `Maa Gayatri Path Lab <no-reply@your-domain>` |
+| `MAIL_WEBHOOK_URL` | empty | Email relay for reset links when `SMTP_URL` is not set: POST `{ to, subject, text }` |
 | `MGPL_SIGNATURE_HEADER_FILE` | — | PNG for the header variant (outside the repo) |
 | `MGPL_SIGNATURE_NONHEADER_FILE` | — | PNG for the non-header variant |
 | `MGPL_SIGNATURE_FILE` | — | One file for both |
@@ -1540,7 +1542,7 @@ flowchart LR
   R --> W1["worker #1"]
   R --> W2["worker #2"]
   W1 & W2 --> DB
-  W1 & W2 -- "MAIL_WEBHOOK_URL" --> MAIL["email relay"]
+  W1 & W2 -- "mail-kit (SMTP_URL)" --> MAIL["mail server"]
   A1 & A2 -. reads .-> SIG["signature files<br/>(secret volume)"]
   W1 & W2 -. reads .-> SIG
 ```
@@ -1570,7 +1572,7 @@ report-kit's resvg is a native module: build the image on the same platform it r
 |---|---|
 | ☐ | `NODE_ENV=production`, `DATABASE_URL`, `REDIS_URL` set from secrets |
 | ☐ | `JWT_SECRET` set from secrets (≥ 32 random characters, e.g. `openssl rand -base64 48`), the same on every API server |
-| ☐ | At least one worker running (`node dist/worker.js`) with `MAIL_WEBHOOK_URL` set |
+| ☐ | At least one worker running (`node dist/worker.js`) with `SMTP_URL` and `MAIL_FROM` set |
 | ☐ | `CORS_ORIGINS` lists exactly the app origins (no `*`) |
 | ☐ | `GRAPHIQL` and `INTROSPECTION` off (the defaults in production) |
 | ☐ | `TRUST_PROXY=true` behind the load balancer (login limits use the client IP) |
@@ -1585,9 +1587,15 @@ report-kit's resvg is a native module: build the image on the same platform it r
 
 ## Sending password-reset emails
 
-Set `MAIL_WEBHOOK_URL`: the worker (or the API, without Redis) POSTs `{ to, subject, text }` JSON to it.
-Point it at your email provider's HTTP API or a small function in front of it. Without it, reset links
-are not sent (the API still answers `true`). To send another way, embed with your own `Mailer`, in the
+Set `SMTP_URL` and `MAIL_FROM`. The worker (or the API, without Redis) sends the mail with
+[mail-kit](https://github.com/mgpl-diagnostics/mail-kit): the "password-reset" mail is written in its mail
+design language and goes out as HTML plus plain text, in the lab's brand (name, address, phone from
+report-kit's lab profile). Any SMTP provider works (Gmail or Zoho app passwords, Amazon SES, Brevo);
+mail-kit refuses to send without TLS to a remote server. The provider's SPF and DKIM records must cover
+the domain in `MAIL_FROM`.
+
+Without `SMTP_URL`, `MAIL_WEBHOOK_URL` still works: the worker POSTs `{ to, subject, text }` JSON to it.
+With neither, reset links are not sent (the API still answers `true`). To send another way, embed with your own `Mailer`, in the
 worker's process when you run workers:
 
 ```ts
@@ -1854,7 +1862,7 @@ flowchart LR
   R --> W2["worker #2"]
   W1 & W2 --> SVC["the same services<br/>(auth-kit · db-kit · report-kit · invoice-kit)"]
   SVC --> DB[("PostgreSQL / MongoDB")]
-  W1 -- "Mailer (MAIL_WEBHOOK_URL)" --> M["email relay"]
+  W1 -- "mail-kit (SMTP_URL)" --> M["mail server"]
   C -- "job(id) (poll)" --> API
   API -- "Job.fromId" --> R
 ```
@@ -1911,7 +1919,8 @@ what development and one-server installs get.
 | `QUEUE_PREFIX` | `mgpl` | Redis key prefix (separate apps or environments) |
 | `WORKER_CONCURRENCY` | `4` | Jobs per worker at once, per queue |
 | `JOB_RESULT_TTL_MS` | `3600000` | How long finished jobs (and their documents) stay readable |
-| `MAIL_WEBHOOK_URL` | — | Email relay: POST `{ to, subject, text }` JSON (your provider's API or a small function) |
+| `SMTP_URL`, `MAIL_FROM` | — | Mail through mail-kit (our mail design language → HTML + text, sent over SMTP) |
+| `MAIL_WEBHOOK_URL` | — | Fallback when `SMTP_URL` is not set: POST `{ to, subject, text }` JSON to a relay |
 
 Shutdown (`SIGTERM`) lets the jobs in hand finish, then closes the database.
 
@@ -2085,7 +2094,7 @@ Follow [12-deployment.md](12-deployment.md). In particular:
   Never commit them.
 - `JWT_SECRET` from your secret store (≥ 32 random characters: `openssl rand -base64 48`), the same on every API server and worker.
 - Run at least one worker: `node dist/worker.js` with `REDIS_URL` and the API's environment.
-- `MAIL_WEBHOOK_URL` (an HTTP relay to the email provider) for password-reset links, and `PASSWORD_RESET_URL`.
+- `SMTP_URL` + `MAIL_FROM` (mail-kit sends over SMTP) for password-reset links, and `PASSWORD_RESET_URL`.
 - `npm run seed` once, with the branch's GST state code (`SEED_BRANCH_STATE`, 22 for Chhattisgarh) and
   the organisation's GSTIN (`SEED_ORG_GSTIN`); billing needs the first, GST returns the second.
 - Add every other branch with `createBranch` **including its `stateCode`**.
@@ -2110,8 +2119,9 @@ Added after the first release (auth-kit 1.2.0, client 1.2.0, api with JWT and th
 - **Run the worker** next to the API (same image, command `node dist/worker.js`), at least one, with
   `WORKER_CONCURRENCY` sized to the CPU (rendering is CPU-bound). Check its log line
   `[worker] queues mail, documents on mgpl:`.
-- **Email relay.** Set `MAIL_WEBHOOK_URL` to a small function that forwards `{ to, subject, text }` to
-  the lab's email provider. Done when "Forgot password" delivers a link.
+- **Email.** Set `SMTP_URL` (e.g. `smtps://user:app-password@smtp.example.com:465`) and `MAIL_FROM`;
+  mail-kit sends the mails. The provider's SPF/DKIM must cover the sending domain. Done when "Forgot
+  password" delivers a link.
 - **Secret rotation drill.** Set `JWT_SECRET=new,old`, deploy, wait 15 minutes, set `JWT_SECRET=new`.
 - **Device binding** is `enforce` by default. If staff share browsers or wipe storage often and get
   signed out, switch to `DEVICE_BINDING=flag` and read the `auth.device_mismatch` audit entries first.
@@ -2198,6 +2208,10 @@ flowchart TD
 {
   "$comment": "Kit sources for `npm run kits` (CI and local builds until every kit is on GitHub Packages with Actions access for this repo). Order = build order. `ref` is a tag or commit on github.com/mgpl-diagnostics/<name>.",
   "kits": [
+    {
+      "name": "mail-kit",
+      "ref": "3e217f56ae36fab59412dcb005862f41ad7120d4"
+    },
     {
       "name": "catalog-kit",
       "ref": "v1.0.0"
@@ -2311,6 +2325,7 @@ Key facts for agents:
     "@mgpl-diagnostics/db-kit": "^1.1.0",
     "@mgpl-diagnostics/finance-kit": "^1.0.0",
     "@mgpl-diagnostics/invoice-kit": "^2.0.0",
+    "@mgpl-diagnostics/mail-kit": "^0.1.0",
     "@mgpl-diagnostics/report-kit": "^2.0.0",
     "@mgpl-diagnostics/tally-kit": "^0.1.0",
     "bullmq": "^5.81.5",
@@ -4552,6 +4567,11 @@ export interface Config {
   deviceBinding: "enforce" | "flag" | "off";
   /** Background jobs (BullMQ on REDIS_URL): key prefix and how many jobs a worker runs at once. */
   jobs: { prefix: string; concurrency: number; keepResultsMs: number };
+  /**
+   * Mail (mail-kit): `SMTP_URL` (smtps://user:pass@host:465 or smtp://…:587) and the sender `MAIL_FROM`.
+   * Preferred over `mailWebhookUrl` when both are set.
+   */
+  smtp: { url: string; from: string } | null;
   /** Optional HTTP relay for emails sent by the worker: POST { to, subject, text } as JSON. */
   mailWebhookUrl: string | null;
 }
@@ -4578,6 +4598,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (secrets.some((v) => v.length < 32)) throw new Error("Every JWT_SECRET needs at least 32 characters");
   const deviceBinding = (env.DEVICE_BINDING || "enforce") as Config["deviceBinding"];
   if (!["enforce", "flag", "off"].includes(deviceBinding)) throw new Error(`DEVICE_BINDING must be enforce, flag or off, got "${deviceBinding}"`);
+  const smtpUrl = env.SMTP_URL || null;
+  if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) throw new Error("SMTP_URL must start with smtp:// or smtps://");
+  if (smtpUrl && !env.MAIL_FROM && !dev) throw new Error('MAIL_FROM is required with SMTP_URL (e.g. "Maa Gayatri Path Lab <no-reply@your-domain>")');
   return {
     env: mode,
     host: env.HOST ?? "0.0.0.0",
@@ -4601,6 +4624,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     deviceBinding,
     jobs: { prefix: env.QUEUE_PREFIX || "mgpl", concurrency: Math.max(1, int(env.WORKER_CONCURRENCY, 4)), keepResultsMs: int(env.JOB_RESULT_TTL_MS, 3600_000) },
+    smtp: smtpUrl ? { url: smtpUrl, from: env.MAIL_FROM || "MGPL Diagnostics <no-reply@localhost.localdomain>" } : null,
     mailWebhookUrl: env.MAIL_WEBHOOK_URL || null,
   };
 }
@@ -4615,9 +4639,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 import { createAuth, memoryKeyValueStore, memoryRateLimiter, memorySessionStore, type Auth } from "@mgpl-diagnostics/auth-kit";
 import { createDb, type Db } from "@mgpl-diagnostics/db-kit";
 import { financePosting } from "@mgpl-diagnostics/finance-kit";
-import type { LabProfile } from "@mgpl-diagnostics/report-kit";
 import type { Config } from "./config/env";
-import { createBullJobQueue, createInlineJobQueue, webhookMailer, type JobDeps, type JobQueue } from "./jobs";
+import { defaultLab, type LabProfile } from "@mgpl-diagnostics/report-kit";
+import { createBullJobQueue, createInlineJobQueue, mailerFromConfig, type JobDeps, type JobQueue } from "./jobs";
 import { createServices, type Mailer, type Services } from "./services";
 
 export interface ContainerOptions {
@@ -4626,7 +4650,7 @@ export interface ContainerOptions {
   db?: Db;
   /** Inject auth (tests). Default: auth-kit on db-kit's users/orgs/roles/audit, sessions in Redis or memory. */
   auth?: Auth;
-  /** Sends password-reset links. Default: MAIL_WEBHOOK_URL when set, otherwise none (links are not sent). */
+  /** Sends password-reset links. Default: mail-kit over SMTP_URL, else MAIL_WEBHOOK_URL, else none (links are not sent). */
   mailer?: Mailer;
   /** Inject a job queue (tests). Default: BullMQ when REDIS_URL is set, otherwise in-process. */
   jobs?: JobQueue;
@@ -4683,14 +4707,15 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
     });
   }
 
-  const mailer = o.mailer ?? (config.mailWebhookUrl ? webhookMailer(config.mailWebhookUrl) : undefined);
+  const lab = o.lab ?? defaultLab();
+  const mailer = o.mailer ?? mailerFromConfig(config, lab);
   let jobDeps: JobDeps | undefined;
   const jobs =
     o.jobs ??
     (config.redisUrl
       ? createBullJobQueue({ redisUrl: config.redisUrl, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs })
       : createInlineJobQueue(() => jobDeps!, { keepResultsMs: config.jobs.keepResultsMs }));
-  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab: o.lab, samples: config.samples, jobs: () => jobs });
+  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs });
   jobDeps = { repos: db.repos, auth, services };
   return {
     config,
@@ -5854,7 +5879,7 @@ export { buildSchema, MODULES, type GraphQLModule } from "./graphql/schema";
 export { ERROR_CODES, type ErrorCode } from "./graphql/errors";
 export type { RequestContext, Actor } from "./graphql/context";
 export type { Mailer } from "./services/auth.service";
-export { createBullJobQueue, createInlineJobQueue, startWorkers, webhookMailer, type JobDeps, type JobInfo, type JobQueue } from "./jobs";
+export { createBullJobQueue, createInlineJobQueue, startWorkers, webhookMailer, mailKitMailer, mailerFromConfig, type JobDeps, type JobInfo, type JobQueue } from "./jobs";
 ```
 
 
@@ -5961,7 +5986,7 @@ export function startWorkers(deps: JobDeps, o: BullOptions & { concurrency: numb
 ```ts
 export { createBullJobQueue, startWorkers, type BullOptions } from "./bullmq";
 export { createInlineJobQueue } from "./inline";
-export { webhookMailer } from "./mailer";
+export { brandFromLab, mailerFromConfig, mailKitMailer, webhookMailer } from "./mailer";
 export { processDocument, processPasswordReset, type JobDeps } from "./processors";
 export { JobFailure, QUEUES, type DocumentJob, type DocumentJobKind, type JobInfo, type JobQueue, type JobState, type PasswordResetJob } from "./types";
 ```
@@ -6022,7 +6047,33 @@ export function createInlineJobQueue(deps: () => JobDeps, o: { keepResultsMs: nu
 ## File: src/jobs/mailer.ts
 
 ```ts
+import { createMailer, smtpTransport, type Brand, type Mailer as MailKitMailer } from "@mgpl-diagnostics/mail-kit";
+import type { LabProfile } from "@mgpl-diagnostics/report-kit";
+import type { Config } from "../config/env";
 import type { Mailer } from "../services/auth.service";
+
+/**
+ * The Mailer on mail-kit: the "password-reset" mail (our mail design language → HTML + text), sent
+ * straight through mail-kit's transport. It runs inside the worker's password-reset job (or in the API
+ * without Redis), so the queueing is the api's own and mail-kit is given no queue.
+ */
+export function mailKitMailer(mail: MailKitMailer): Mailer {
+  return {
+    async passwordReset(to, link, expiresAt) {
+      await mail.send("password-reset", { name: to.name, email: to.email, link, expiresAt: expiresAt.toISOString() }, { to: { name: to.name, email: to.email } });
+    },
+  };
+}
+
+/** The lab as mail-kit's brand (header and footer of every mail). Details come from report-kit's lab profile. */
+export function brandFromLab(lab: LabProfile): Brand {
+  return {
+    name: lab.name,
+    ...(lab.addressLines?.length ? { addressLines: lab.addressLines } : {}),
+    ...(lab.phone ? { phone: lab.phone } : {}),
+    ...(lab.email ? { email: lab.email } : {}),
+  };
+}
 
 /**
  * A Mailer that POSTs each email as JSON `{ to, subject, text }` to an HTTP relay (MAIL_WEBHOOK_URL):
@@ -6043,6 +6094,14 @@ export function webhookMailer(url: string, fetchImpl: typeof fetch = fetch): Mai
       if (!res.ok) throw new Error(`mail relay answered ${res.status}`);
     },
   };
+}
+
+/** The Mailer the configuration asks for: mail-kit over SMTP_URL, else MAIL_WEBHOOK_URL, else none. */
+export function mailerFromConfig(config: Config, lab: LabProfile): Mailer | undefined {
+  if (config.smtp) {
+    return mailKitMailer(createMailer({ transport: smtpTransport(config.smtp.url), from: config.smtp.from, brand: brandFromLab(lab) }));
+  }
+  return config.mailWebhookUrl ? webhookMailer(config.mailWebhookUrl) : undefined;
 }
 ```
 
@@ -6180,8 +6239,8 @@ const container = await createContainer({ config });
 if (config.env === "production" && !config.redisUrl) console.warn("[api] REDIS_URL is not set: sessions and jobs live in this process only (one server, lost on restart)");
 if (config.jwt.generated) console.warn("[api] JWT_SECRET is not set: using a random secret, so tokens die when the process restarts");
 // With REDIS_URL, emails and background documents are sent and rendered by `npm run worker`.
-// Without it they run here; reset links go to MAIL_WEBHOOK_URL (or createContainer({ config, mailer })).
-if (config.env === "production" && !config.redisUrl && !config.mailWebhookUrl) console.warn("[api] no Mailer configured: password-reset links are not sent");
+// Without it they run here; reset links go out through mail-kit (SMTP_URL), MAIL_WEBHOOK_URL, or createContainer({ config, mailer }).
+if (config.env === "production" && !config.redisUrl && !config.smtp && !config.mailWebhookUrl) console.warn("[api] no Mailer configured: password-reset links are not sent");
 const app = await buildServer(container);
 await app.listen({ host: config.host, port: config.port });
 console.log(`[api] GraphQL on http://${config.host}:${config.port}${config.graphqlPath} (${config.db.backend})`);
@@ -8898,7 +8957,7 @@ if (!config.redisUrl) {
   console.error("[worker] REDIS_URL is required: the worker takes its jobs from Redis (BullMQ)");
   process.exit(1);
 }
-if (config.env === "production" && !config.mailWebhookUrl) console.warn("[worker] MAIL_WEBHOOK_URL is not set: password-reset links are not sent");
+if (config.env === "production" && !config.smtp && !config.mailWebhookUrl) console.warn("[worker] neither SMTP_URL nor MAIL_WEBHOOK_URL is set: password-reset links are not sent");
 const container = await createContainer({ config });
 const workers = startWorkers(container.jobDeps, { redisUrl: config.redisUrl, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs, concurrency: config.jobs.concurrency });
 console.log(`[worker] queues ${workers.workers.map((w) => w.name).join(", ")} on ${config.jobs.prefix}: (concurrency ${config.jobs.concurrency}, ${config.db.backend})`);
@@ -8937,6 +8996,9 @@ import { createContainer } from "../src/container";
 import { buildServer } from "../src/server";
 import { startWorkers } from "../src/jobs";
 import type { Mailer } from "../src/services/auth.service";
+import { createMailer, memoryTransport } from "@mgpl-diagnostics/mail-kit";
+import { MGPL_LAB } from "@mgpl-diagnostics/report-kit";
+import { brandFromLab, mailerFromConfig, mailKitMailer } from "../src/jobs";
 
 let passed = 0;
 let failed = 0;
@@ -9295,9 +9357,30 @@ function staticChecks() {
   ok(missing.length === 0, `client: every query and mutation has a client operation${missing.length ? ` (missing: ${missing.join(", ")})` : ""}`);
 }
 
+/** mail-kit as the Mailer: the reset mail is rendered from the mail design language and sent once. */
+async function mailSuite() {
+  console.log("\n[mail]");
+  const transport = memoryTransport();
+  const mailer = mailKitMailer(createMailer({ transport, from: "MGPL <no-reply@apl.test>", brand: brandFromLab(MGPL_LAB) }));
+  const link = "https://lab.apl.test/reset-password?token=abc%2B1&x=<y>";
+  await mailer.passwordReset({ email: "desk@apl.test", name: "Desk <b>User</b>" }, link, new Date("2026-10-14T16:30:00Z"));
+  const m = transport.sent[0];
+  ok(transport.sent.length === 1 && m?.subject === "Reset your password" && JSON.stringify(m.to).includes("desk@apl.test"), "[mail] mail-kit sends the password-reset mail to the user");
+  ok(!!m && m.text.includes(link) && m.html.includes(link.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")), "[mail] the reset link is in the text and (escaped) in the HTML");
+  ok(!!m && !m.html.includes("<b>User</b>") && m.html.includes("Desk &lt;b&gt;User&lt;/b&gt;"), "[mail] user data is escaped in the HTML");
+  ok(!!m && m.text.includes("14 Oct 2026, 10:00 pm IST") && m.text.includes(MGPL_LAB.name), "[mail] expiry in IST and the lab's brand footer");
+  const cfg = (env: Record<string, string>) => loadConfig({ NODE_ENV: "test", DATABASE_URL: "unused", ...env });
+  ok(mailerFromConfig(cfg({}), MGPL_LAB) === undefined, "[mail] no SMTP_URL and no MAIL_WEBHOOK_URL → no Mailer");
+  ok(typeof mailerFromConfig(cfg({ SMTP_URL: "smtp://localhost:2525" }), MGPL_LAB)?.passwordReset === "function", "[mail] SMTP_URL → the mail-kit Mailer");
+  const threw = (env: Record<string, string>) => { try { loadConfig(env); return false; } catch { return true; } };
+  ok(threw({ NODE_ENV: "production", DATABASE_URL: "x", CORS_ORIGINS: "https://a.test", JWT_SECRET: "x".repeat(32), SMTP_URL: "smtps://u:p@smtp.test" }), "[mail] production refuses SMTP_URL without MAIL_FROM");
+  ok(threw({ NODE_ENV: "test", DATABASE_URL: "x", SMTP_URL: "http://smtp.test" }), "[mail] SMTP_URL must be smtp:// or smtps://");
+}
+
 async function main() {
   const t0 = Date.now();
   staticChecks();
+  await mailSuite();
   const backends = (process.env.TEST_BACKENDS ?? "pg,mongo").split(",").map((s) => s.trim());
 
   if (backends.includes("pg")) {

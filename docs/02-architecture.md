@@ -82,7 +82,7 @@ src/
     processors.ts       password-reset, document rendering (call services)
     bullmq.ts           createBullJobQueue (producer), startWorkers (consumer)
     inline.ts           createInlineJobQueue (no Redis: runs at once in this process)
-    mailer.ts           webhookMailer (MAIL_WEBHOOK_URL)
+    mailer.ts           mailerFromConfig: mail-kit over SMTP_URL (mailKitMailer), else webhookMailer (MAIL_WEBHOOK_URL)
   schema/<module>.graphql.ts      SDL
   controllers/<module>.controller.ts
   services/<area>.service.ts, index.ts (createServices), util.ts

@@ -144,7 +144,7 @@ Follow [12-deployment.md](12-deployment.md). In particular:
   Never commit them.
 - `JWT_SECRET` from your secret store (≥ 32 random characters: `openssl rand -base64 48`), the same on every API server and worker.
 - Run at least one worker: `node dist/worker.js` with `REDIS_URL` and the API's environment.
-- `MAIL_WEBHOOK_URL` (an HTTP relay to the email provider) for password-reset links, and `PASSWORD_RESET_URL`.
+- `SMTP_URL` + `MAIL_FROM` (mail-kit sends over SMTP) for password-reset links, and `PASSWORD_RESET_URL`.
 - `npm run seed` once, with the branch's GST state code (`SEED_BRANCH_STATE`, 22 for Chhattisgarh) and
   the organisation's GSTIN (`SEED_ORG_GSTIN`); billing needs the first, GST returns the second.
 - Add every other branch with `createBranch` **including its `stateCode`**.
@@ -169,8 +169,9 @@ Added after the first release (auth-kit 1.2.0, client 1.2.0, api with JWT and th
 - **Run the worker** next to the API (same image, command `node dist/worker.js`), at least one, with
   `WORKER_CONCURRENCY` sized to the CPU (rendering is CPU-bound). Check its log line
   `[worker] queues mail, documents on mgpl:`.
-- **Email relay.** Set `MAIL_WEBHOOK_URL` to a small function that forwards `{ to, subject, text }` to
-  the lab's email provider. Done when "Forgot password" delivers a link.
+- **Email.** Set `SMTP_URL` (e.g. `smtps://user:app-password@smtp.example.com:465`) and `MAIL_FROM`;
+  mail-kit sends the mails. The provider's SPF/DKIM must cover the sending domain. Done when "Forgot
+  password" delivers a link.
 - **Secret rotation drill.** Set `JWT_SECRET=new,old`, deploy, wait 15 minutes, set `JWT_SECRET=new`.
 - **Device binding** is `enforce` by default. If staff share browsers or wipe storage often and get
   signed out, switch to `DEVICE_BINDING=flag` and read the `auth.device_mismatch` audit entries first.

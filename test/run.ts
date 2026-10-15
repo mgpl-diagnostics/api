@@ -18,6 +18,9 @@ import { createContainer } from "../src/container";
 import { buildServer } from "../src/server";
 import { startWorkers } from "../src/jobs";
 import type { Mailer } from "../src/services/auth.service";
+import { createMailer, memoryTransport } from "@mgpl-diagnostics/mail-kit";
+import { MGPL_LAB } from "@mgpl-diagnostics/report-kit";
+import { brandFromLab, mailerFromConfig, mailKitMailer } from "../src/jobs";
 
 let passed = 0;
 let failed = 0;
@@ -376,9 +379,30 @@ function staticChecks() {
   ok(missing.length === 0, `client: every query and mutation has a client operation${missing.length ? ` (missing: ${missing.join(", ")})` : ""}`);
 }
 
+/** mail-kit as the Mailer: the reset mail is rendered from the mail design language and sent once. */
+async function mailSuite() {
+  console.log("\n[mail]");
+  const transport = memoryTransport();
+  const mailer = mailKitMailer(createMailer({ transport, from: "MGPL <no-reply@apl.test>", brand: brandFromLab(MGPL_LAB) }));
+  const link = "https://lab.apl.test/reset-password?token=abc%2B1&x=<y>";
+  await mailer.passwordReset({ email: "desk@apl.test", name: "Desk <b>User</b>" }, link, new Date("2026-10-14T16:30:00Z"));
+  const m = transport.sent[0];
+  ok(transport.sent.length === 1 && m?.subject === "Reset your password" && JSON.stringify(m.to).includes("desk@apl.test"), "[mail] mail-kit sends the password-reset mail to the user");
+  ok(!!m && m.text.includes(link) && m.html.includes(link.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")), "[mail] the reset link is in the text and (escaped) in the HTML");
+  ok(!!m && !m.html.includes("<b>User</b>") && m.html.includes("Desk &lt;b&gt;User&lt;/b&gt;"), "[mail] user data is escaped in the HTML");
+  ok(!!m && m.text.includes("14 Oct 2026, 10:00 pm IST") && m.text.includes(MGPL_LAB.name), "[mail] expiry in IST and the lab's brand footer");
+  const cfg = (env: Record<string, string>) => loadConfig({ NODE_ENV: "test", DATABASE_URL: "unused", ...env });
+  ok(mailerFromConfig(cfg({}), MGPL_LAB) === undefined, "[mail] no SMTP_URL and no MAIL_WEBHOOK_URL → no Mailer");
+  ok(typeof mailerFromConfig(cfg({ SMTP_URL: "smtp://localhost:2525" }), MGPL_LAB)?.passwordReset === "function", "[mail] SMTP_URL → the mail-kit Mailer");
+  const threw = (env: Record<string, string>) => { try { loadConfig(env); return false; } catch { return true; } };
+  ok(threw({ NODE_ENV: "production", DATABASE_URL: "x", CORS_ORIGINS: "https://a.test", JWT_SECRET: "x".repeat(32), SMTP_URL: "smtps://u:p@smtp.test" }), "[mail] production refuses SMTP_URL without MAIL_FROM");
+  ok(threw({ NODE_ENV: "test", DATABASE_URL: "x", SMTP_URL: "http://smtp.test" }), "[mail] SMTP_URL must be smtp:// or smtps://");
+}
+
 async function main() {
   const t0 = Date.now();
   staticChecks();
+  await mailSuite();
   const backends = (process.env.TEST_BACKENDS ?? "pg,mongo").split(",").map((s) => s.trim());
 
   if (backends.includes("pg")) {

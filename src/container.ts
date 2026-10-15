@@ -1,9 +1,9 @@
 import { createAuth, memoryKeyValueStore, memoryRateLimiter, memorySessionStore, type Auth } from "@mgpl-diagnostics/auth-kit";
 import { createDb, type Db } from "@mgpl-diagnostics/db-kit";
 import { financePosting } from "@mgpl-diagnostics/finance-kit";
-import type { LabProfile } from "@mgpl-diagnostics/report-kit";
 import type { Config } from "./config/env";
-import { createBullJobQueue, createInlineJobQueue, webhookMailer, type JobDeps, type JobQueue } from "./jobs";
+import { defaultLab, type LabProfile } from "@mgpl-diagnostics/report-kit";
+import { createBullJobQueue, createInlineJobQueue, mailerFromConfig, type JobDeps, type JobQueue } from "./jobs";
 import { createServices, type Mailer, type Services } from "./services";
 
 export interface ContainerOptions {
@@ -12,7 +12,7 @@ export interface ContainerOptions {
   db?: Db;
   /** Inject auth (tests). Default: auth-kit on db-kit's users/orgs/roles/audit, sessions in Redis or memory. */
   auth?: Auth;
-  /** Sends password-reset links. Default: MAIL_WEBHOOK_URL when set, otherwise none (links are not sent). */
+  /** Sends password-reset links. Default: mail-kit over SMTP_URL, else MAIL_WEBHOOK_URL, else none (links are not sent). */
   mailer?: Mailer;
   /** Inject a job queue (tests). Default: BullMQ when REDIS_URL is set, otherwise in-process. */
   jobs?: JobQueue;
@@ -69,14 +69,15 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
     });
   }
 
-  const mailer = o.mailer ?? (config.mailWebhookUrl ? webhookMailer(config.mailWebhookUrl) : undefined);
+  const lab = o.lab ?? defaultLab();
+  const mailer = o.mailer ?? mailerFromConfig(config, lab);
   let jobDeps: JobDeps | undefined;
   const jobs =
     o.jobs ??
     (config.redisUrl
       ? createBullJobQueue({ redisUrl: config.redisUrl, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs })
       : createInlineJobQueue(() => jobDeps!, { keepResultsMs: config.jobs.keepResultsMs }));
-  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab: o.lab, samples: config.samples, jobs: () => jobs });
+  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs });
   jobDeps = { repos: db.repos, auth, services };
   return {
     config,
