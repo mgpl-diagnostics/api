@@ -1,8 +1,9 @@
 // Starts the API: `npm run dev` (watch) or `npm run build && npm start`.
-import { loadConfig } from "./config/env";
+import { loadConfig, loadEnvFile } from "./config/env";
 import { createContainer } from "./container";
 import { buildServer } from "./server";
 
+loadEnvFile();
 const config = loadConfig();
 const container = await createContainer({ config });
 if (config.env === "production" && !config.redisUrl) console.warn("[api] REDIS_URL is not set: sessions and jobs live in this process only (one server, lost on restart)");

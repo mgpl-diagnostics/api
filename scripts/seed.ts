@@ -6,7 +6,9 @@
 import { assertPasswordPolicy, hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization } from "@mgpl-diagnostics/db-kit";
 import { financePosting, seedFinanceLedgers } from "@mgpl-diagnostics/finance-kit";
-import { loadConfig } from "../src/config/env";
+import { loadConfig, loadEnvFile } from "../src/config/env";
+
+loadEnvFile();
 
 const need = (k: string) => {
   const v = process.env[k]?.trim();

@@ -1,9 +1,10 @@
 // Starts the background worker: `npm run worker:dev` (watch) or `npm run build && npm run worker`.
 // Same configuration as the API; REDIS_URL is required. Run as many workers as you like.
-import { loadConfig } from "./config/env";
+import { loadConfig, loadEnvFile } from "./config/env";
 import { createContainer } from "./container";
 import { startWorkers } from "./jobs";
 
+loadEnvFile();
 const config = loadConfig();
 if (!config.redisUrl) {
   console.error("[worker] REDIS_URL is required: the worker takes its jobs from Redis (BullMQ)");

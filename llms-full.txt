@@ -148,7 +148,7 @@ flowchart LR
 
 ```bash
 npm ci                             # kits from GitHub Packages; NODE_AUTH_TOKEN with read:packages (docs/03)
-cp .env.example .env               # DATABASE_URL, …
+cp .env.example .env               # every variable documented; SMTP_URL / MAIL_FROM for mail
 SEED_ORG_NAME=… SEED_ORG_CODE=MGPL SEED_BRANCH_CODE=ARG01 SEED_BRANCH_NAME=Arang SEED_BRANCH_STATE=22 \
 SEED_OWNER_NAME=… SEED_OWNER_EMAIL=… SEED_OWNER_PASSWORD=… npm run seed
 npm run dev                        # http://localhost:4000/graphql
@@ -558,8 +558,13 @@ Every kit is published to GitHub Packages, so this is all you need. To test **un
 ## 2. Configure
 
 ```bash
-cp .env.example .env   # then edit DATABASE_URL etc.; see 09-configuration.md
+cp .env.example .env   # every variable, commented; the defaults run locally as they are
 ```
+
+`.env` is loaded automatically by `npm run dev`, `npm run worker:dev` and `npm run seed`. Edit
+`DATABASE_URL` for your database; to send password-reset mail locally, set `SMTP_URL` and `MAIL_FROM`
+(the Mail section of `.env.example` has examples for common providers). See
+[09-configuration.md](09-configuration.md).
 
 ## 3. Seed the first organisation
 
@@ -1323,7 +1328,13 @@ result client-side if the same document is opened repeatedly.
 # 09 · Configuration
 
 All configuration comes from environment variables, read once by `loadConfig()` (`src/config/env.ts`).
-Copy `.env.example` to `.env` for local work; never commit it.
+[`.env.example`](../.env.example) lists every one of them, grouped by area, with what it does, whether it
+is required in production and whether it is a secret. Copy it to `.env` (git-ignored; never commit it).
+`npm run dev`, `npm start`, `npm run worker` and `npm run seed` load `.env` from the working directory;
+variables already set in the real environment win over the file.
+
+**Where mail is configured:** `SMTP_URL` (`smtps://user:pass@host:465` or `smtp://user:pass@host:587`) and
+`MAIL_FROM`. See [Sending password-reset emails](12-deployment.md#sending-password-reset-emails).
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -1588,7 +1599,8 @@ report-kit's resvg is a native module: build the image on the same platform it r
 
 ## Sending password-reset emails
 
-Set `SMTP_URL` and `MAIL_FROM`. The worker (or the API, without Redis) sends the mail with
+Set `SMTP_URL` and `MAIL_FROM` (the Mail section of [`.env.example`](../.env.example) shows the URL form
+for Gmail, Zoho, Amazon SES and Brevo; URL-encode the user and password). The worker (or the API, without Redis) sends the mail with
 [mail-kit](https://github.com/mgpl-diagnostics/mail-kit): the "password-reset" mail is written in its mail
 design language and goes out as HTML plus plain text, in the lab's brand (name, address, phone from
 report-kit's lab profile). Any SMTP provider works (Gmail or Zoho app passwords, Amazon SES, Brevo);
@@ -4493,7 +4505,9 @@ console.log(`schema.graphql: ${sdl.split("\n").length} lines`);
 import { assertPasswordPolicy, hashPassword, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization } from "@mgpl-diagnostics/db-kit";
 import { financePosting, seedFinanceLedgers } from "@mgpl-diagnostics/finance-kit";
-import { loadConfig } from "../src/config/env";
+import { loadConfig, loadEnvFile } from "../src/config/env";
+
+loadEnvFile();
 
 const need = (k: string) => {
   const v = process.env[k]?.trim();
@@ -4581,6 +4595,20 @@ export interface Config {
   smtp: { url: string; from: string } | null;
   /** Optional HTTP relay for emails sent by the worker: POST { to, subject, text } as JSON. */
   mailWebhookUrl: string | null;
+}
+
+/**
+ * Loads `.env` from the working directory into `process.env`, if the file exists. Variables already set
+ * in the environment win over the file. Called by `main.ts`, `worker.ts` and `scripts/seed.ts`; an app
+ * that embeds the API configures its own environment.
+ */
+export function loadEnvFile(path = ".env"): void {
+  if (typeof process.loadEnvFile !== "function") return; // Node < 20.12: export the variables instead
+  try {
+    process.loadEnvFile(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
 }
 
 const bool = (v: string | undefined, d: boolean) => (v == null || v === "" ? d : ["1", "true", "yes", "on"].includes(v.toLowerCase()));
@@ -6237,10 +6265,11 @@ export class JobFailure extends Error {
 
 ```ts
 // Starts the API: `npm run dev` (watch) or `npm run build && npm start`.
-import { loadConfig } from "./config/env";
+import { loadConfig, loadEnvFile } from "./config/env";
 import { createContainer } from "./container";
 import { buildServer } from "./server";
 
+loadEnvFile();
 const config = loadConfig();
 const container = await createContainer({ config });
 if (config.env === "production" && !config.redisUrl) console.warn("[api] REDIS_URL is not set: sessions and jobs live in this process only (one server, lost on restart)");
@@ -8955,10 +8984,11 @@ export async function scopedFind<T extends { id: Id }>(
 ```ts
 // Starts the background worker: `npm run worker:dev` (watch) or `npm run build && npm run worker`.
 // Same configuration as the API; REDIS_URL is required. Run as many workers as you like.
-import { loadConfig } from "./config/env";
+import { loadConfig, loadEnvFile } from "./config/env";
 import { createContainer } from "./container";
 import { startWorkers } from "./jobs";
 
+loadEnvFile();
 const config = loadConfig();
 if (!config.redisUrl) {
   console.error("[worker] REDIS_URL is required: the worker takes its jobs from Redis (BullMQ)");
