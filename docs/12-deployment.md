@@ -45,7 +45,7 @@ report-kit's resvg is a native module: build the image on the same platform it r
 | ☐ | At least one worker running (`node dist/worker.js`) with `SMTP_URL` and `MAIL_FROM` set |
 | ☐ | `CORS_ORIGINS` lists exactly the app origins (no `*`) |
 | ☐ | `GRAPHIQL` and `INTROSPECTION` off (the defaults in production) |
-| ☐ | `TRUST_PROXY=true` behind the load balancer (login limits use the client IP) |
+| ☐ | `TRUST_PROXY=true` behind one load balancer, `TRUST_PROXY=2` behind a CDN plus a load balancer (login limits use the client IP) |
 | ☐ | `MGPL_SAMPLES` off (the default in production) |
 | ☐ | Signature files mounted read-only; `MGPL_SIGNATURE_*_FILE` point at them |
 | ☐ | `PASSWORD_RESET_URL` points at the app's reset page, and a mailer is wired (below) |

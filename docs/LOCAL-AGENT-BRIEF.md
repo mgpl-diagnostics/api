@@ -180,8 +180,9 @@ Added after the first release (auth-kit 1.2.0, client 1.2.0, api with JWT and th
   signed out, switch to `DEVICE_BINDING=flag` and read the `auth.device_mismatch` audit entries first.
 - **Privacy notice.** The client sends device signals (list in the client's `docs/session.md`); add
   them to the lab's privacy notice before going live.
-- **security-kit.** The device-signal code is self-contained (`client/src/graphql/device.ts`,
-  `api/src/graphql/device.ts`, auth-kit's `cleanDeviceSignals`) so it can move to security-kit.
+- **security-kit.** The client collects device signals with security-kit, and the api uses it for
+  security headers and the client IP. Publish it (see the shared brief's security-kit step), then switch
+  the client's git dev dependency on it to `^0.2.0`.
 
 Done when: a login survives an access-token expiry without the user noticing, a reset email arrives,
 and `startDocumentJob` completes with a worker running.

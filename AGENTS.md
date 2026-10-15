@@ -9,7 +9,7 @@ the kits, used as internal libraries. Read [docs/README.md](docs/README.md) for 
 ```
 src/main.ts            start (config → container → server)
 src/worker.ts          start the worker (config → container → BullMQ workers; needs REDIS_URL)
-src/server.ts          Fastify + Yoga + GET /health (no other routes)
+src/server.ts          Fastify + Yoga + GET /health (no other routes); security-kit headers and client IP
 src/container.ts       createDb (posting: financePosting) + createAuth (JWT) + job queue + services, once per process
 src/jobs/              queues (BullMQ or in-process), job payloads, processors, webhook mailer
 src/config/env.ts      loadConfig: every environment variable
@@ -49,7 +49,9 @@ kits.json              kit refs for `npm run kits` (building unreleased kit bran
 12. **Jobs.** Permissions are checked before a job is queued; processors call services (never GraphQL);
     job payloads carry ids and the actor, never tokens or secrets. Every job runs both on BullMQ and in-process.
 13. **Tokens.** Access tokens are auth-kit JWTs; refresh tokens and device binding live in auth-kit. Device
-    signal mapping stays in `src/graphql/device.ts` (it moves to security-kit).
+    signals are collected by security-kit in the client; `src/graphql/device.ts` maps DeviceInput to auth-kit.
+    Security headers and the client IP come from security-kit's `fastifySecurity` (never Fastify's own
+    `req.ip` with a trust-all proxy setting: the left X-Forwarded-For entry is client-controlled).
 14. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
 
 ## Commands
