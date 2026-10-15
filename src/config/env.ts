@@ -25,6 +25,11 @@ export interface Config {
   /** Behind a proxy (nginx, a load balancer): read the client IP from X-Forwarded-For. */
   /** Reverse proxies in front of the API that append to X-Forwarded-For (TRUST_PROXY). 0 = use the socket address. */
   trustedHops: number;
+  /**
+   * Request header in which the TLS-terminating proxy sends the client's TLS fingerprint (JA4 / JA3), e.g.
+   * "x-ja4" (TLS_FINGERPRINT_HEADER). Read only through trusted proxies, so it needs TRUST_PROXY ≥ 1. null = off.
+   */
+  tlsFingerprintHeader: string | null;
   /** Demo report and invoice samples (report-kit / invoice-kit) in `documents`. */
   samples: boolean;
   /** Session lifetime knobs, passed to auth-kit. */
@@ -93,6 +98,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (secrets.some((v) => v.length < 32)) throw new Error("Every JWT_SECRET needs at least 32 characters");
   const deviceBinding = (env.DEVICE_BINDING || "enforce") as Config["deviceBinding"];
   if (!["enforce", "flag", "off"].includes(deviceBinding)) throw new Error(`DEVICE_BINDING must be enforce, flag or off, got "${deviceBinding}"`);
+  const trustedHops = hops(env.TRUST_PROXY);
+  const tlsFingerprintHeader = env.TLS_FINGERPRINT_HEADER?.trim().toLowerCase() || null;
+  if (tlsFingerprintHeader && !/^[a-z0-9-]{1,64}$/.test(tlsFingerprintHeader)) throw new Error(`TLS_FINGERPRINT_HEADER must be a header name like x-ja4, got "${tlsFingerprintHeader}"`);
+  // without a trusted proxy any client could send the header, so it would never be read: say so instead
+  if (tlsFingerprintHeader && trustedHops < 1) throw new Error("TLS_FINGERPRINT_HEADER needs TRUST_PROXY (the proxy that sets the header must be trusted)");
   const smtpUrl = env.SMTP_URL || null;
   if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) throw new Error("SMTP_URL must start with smtp:// or smtps://");
   if (smtpUrl && !env.MAIL_FROM && !dev) throw new Error('MAIL_FROM is required with SMTP_URL (e.g. "Maa Gayatri Path Lab <no-reply@your-domain>")');
@@ -107,7 +117,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     graphiql: bool(env.GRAPHIQL, dev),
     introspection: bool(env.INTROSPECTION, dev),
     bodyLimit: int(env.BODY_LIMIT_BYTES, 2_000_000),
-    trustedHops: hops(env.TRUST_PROXY),
+    trustedHops,
+    tlsFingerprintHeader,
     samples: bool(env.MGPL_SAMPLES, dev),
     session: { idleMs: int(env.SESSION_IDLE_MS, 12 * 3600_000), maxAgeMs: int(env.SESSION_MAX_AGE_MS, 30 * 86400_000) },
     resetUrl: env.PASSWORD_RESET_URL || null,
