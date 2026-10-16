@@ -7,13 +7,15 @@
 **The MGPL Diagnostics backend: one GraphQL endpoint for the whole lab.**
 
 Sign-in, patients, bookings, samples, results, reports, billing, books, GST, receivables, settlements,
-cash and bank, documents. TypeScript, GraphQL Yoga on Fastify, PostgreSQL or MongoDB.
+cash and bank, documents. TypeScript, GraphQL Yoga on Fastify, PostgreSQL (through PgBouncer) or MongoDB,
+Redis. Runs as any number of replicas behind a load balancer.
 
 [![Endpoint](https://img.shields.io/badge/endpoint-POST%20%2Fgraphql-14264A)](#)
 [![Databases](https://img.shields.io/badge/db-PostgreSQL%20%7C%20MongoDB-14264A)](#)
+[![Pooling](https://img.shields.io/badge/pool-PgBouncer-14264A)](docs/17-scaling.md)
 [![License](https://img.shields.io/badge/license-All%20rights%20reserved-E9A23B)](LICENSE)
 
-[Docs](docs/README.md) · [Architecture](docs/02-architecture.md) · [Getting started](docs/03-getting-started.md) · [API reference](docs/04-api-reference.md) · [Client](docs/14-client.md)
+[Docs](docs/README.md) · [Architecture](docs/02-architecture.md) · [Getting started](docs/03-getting-started.md) · [API reference](docs/04-api-reference.md) · [Client](docs/14-client.md) · [Scaling](docs/17-scaling.md)
 
 </div>
 
@@ -21,9 +23,12 @@ cash and bank, documents. TypeScript, GraphQL Yoga on Fastify, PostgreSQL or Mon
 
 ```mermaid
 flowchart LR
-  APP["Apps<br/>@mgpl-diagnostics/client"] -- "POST /graphql" --> API["api<br/>controllers → services"]
+  APP["Apps<br/>@mgpl-diagnostics/client"] -- "POST /graphql" --> LB["load balancer<br/>(nginx)"]
+  LB --> API["api × N replicas<br/>controllers → services"]
   API --> K["auth-kit · db-kit · catalog-kit<br/>report-kit · invoice-kit · ledger-kit · finance-kit"]
-  K --> DB[("PostgreSQL / MongoDB")]
+  K --> PGB["PgBouncer<br/>transaction pooling"]
+  PGB --> PG[("PostgreSQL")]
+  K --> MG[("or MongoDB")]
   K -.-> R[("Redis")]
   R -. "BullMQ jobs" .-> W["worker<br/>emails · documents"]
   W --> K
@@ -40,6 +45,10 @@ flowchart LR
   device; logout and disabling still apply at once. See [docs/06](docs/06-auth-and-permissions.md).
 - **A worker on Redis + BullMQ** for reset emails and background documents (`npm run worker`); without
   Redis the same jobs run in the API process. See [docs/16-worker.md](docs/16-worker.md).
+- **Horizontal scaling through PgBouncer.** Run N identical replicas behind a load balancer: sessions,
+  login limits and jobs live in Redis, and PostgreSQL is reached through PgBouncer in transaction mode
+  (the whole test suite runs through it). `GET /health` is the readiness check, SIGTERM drains gracefully,
+  and `docker compose up --scale api=N` runs the whole stack. See [docs/17-scaling.md](docs/17-scaling.md).
 - **Layers.** `schema/` (SDL) → `controllers/` (permissions, mapping) → `services/` (kit calls) → kits.
 - **Safe by construction.** The organisation and user come from the session; every record is checked
   against them and against its branch; unknown errors are masked; depth and list limits.
@@ -73,7 +82,7 @@ const hits = await mgpl.catalog.search("cbc");
 
 Everything from A to Z is in [docs/](docs/README.md), with Mermaid diagrams: overview, architecture,
 getting started, the generated API reference, errors, auth and permissions, domain flows, documents,
-configuration, data and money, testing, deployment, adding a feature, client, glossary, and runnable
+configuration, data and money, testing, deployment, adding a feature, client, glossary, worker, scaling, and runnable
 [examples](docs/examples/). What has to happen outside this repo (releases, org settings, deployment) is
 in [docs/LOCAL-AGENT-BRIEF.md](docs/LOCAL-AGENT-BRIEF.md).
 
