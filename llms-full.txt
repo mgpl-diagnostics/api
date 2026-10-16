@@ -207,6 +207,8 @@ npm run llms                # llms-full.txt
 | [auth-kit](https://github.com/mgpl-diagnostics/auth-kit) · [db-kit](https://github.com/mgpl-diagnostics/db-kit) · [catalog-kit](https://github.com/mgpl-diagnostics/catalog-kit) | auth, data, test catalog |
 | [report-kit](https://github.com/mgpl-diagnostics/report-kit) · [invoice-kit](https://github.com/mgpl-diagnostics/invoice-kit) | report and invoice rendering |
 | [ledger-kit](https://github.com/mgpl-diagnostics/ledger-kit) · [finance-kit](https://github.com/mgpl-diagnostics/finance-kit) | books, GST and finance |
+| [security-kit](https://github.com/mgpl-diagnostics/security-kit) · [mail-kit](https://github.com/mgpl-diagnostics/mail-kit) · [worker-kit](https://github.com/mgpl-diagnostics/worker-kit) | security headers, client IP and device signals; mail; background jobs |
+| [pgbouncer-kit](https://github.com/mgpl-diagnostics/pgbouncer-kit) | PgBouncer setup (config, userlist, compose, TLS) for the connection pooler in front of PostgreSQL |
 | [report-studio](https://github.com/mgpl-diagnostics/report-studio) | Next.js reference app |
 
 <sub>© MGPL Diagnostics (Maa Gayatri Path Lab). All rights reserved; see [LICENSE](LICENSE). ledger-kit is our own software, not affiliated with Tally Solutions.</sub>
