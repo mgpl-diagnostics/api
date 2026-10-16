@@ -18,6 +18,7 @@ flowchart TD
   B --> M["13 Adding a feature"]
   D --> N["14 Client"]
   B --> O["16 Worker"]
+  L --> P["17 Scaling"]
 ```
 
 | # | Page | What it answers |
@@ -38,5 +39,6 @@ flowchart TD
 | 14 | [Client](14-client.md) | Using `@mgpl-diagnostics/client` against this API |
 | 15 | [Glossary](15-glossary.md) | Lab, billing and accounting terms |
 | 16 | [Worker](16-worker.md) | Background jobs on Redis + BullMQ: emails, documents, running workers |
+| 17 | [Scaling](17-scaling.md) | N replicas behind a proxy, PgBouncer, readiness, graceful shutdown, docker-compose |
 | — | [examples/](examples/) | Runnable `.graphql` operations |
 | — | [LOCAL-AGENT-BRIEF.md](LOCAL-AGENT-BRIEF.md) | What a local agent (or a person) must do next, outside this repo |

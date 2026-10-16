@@ -2,6 +2,7 @@
 export { loadConfig, type Config } from "./config/env";
 export { createContainer, type Container, type ContainerOptions } from "./container";
 export { buildServer } from "./server";
+export { isDraining, shutdown, shutdownOnSignals, type ShutdownOptions } from "./lifecycle";
 export { buildSchema, MODULES, type GraphQLModule } from "./graphql/schema";
 export { ERROR_CODES, type ErrorCode } from "./graphql/errors";
 export type { RequestContext, Actor } from "./graphql/context";

@@ -9,6 +9,8 @@ the kits, used as internal libraries. Read [docs/README.md](docs/README.md) for 
 ```
 src/main.ts            start (config → container → server)
 src/worker.ts          start the worker (config → container → BullMQ workers; needs REDIS_URL)
+src/sync.ts            create missing tables / indexes once, then exit (`npm run db:sync`; replicas run DB_SYNC=false)
+src/lifecycle.ts       readiness while draining, graceful shutdown on SIGTERM
 src/server.ts          Fastify + Yoga + GET /health (no other routes); security-kit headers and client IP
 src/container.ts       createDb (posting: financePosting) + createAuth (JWT) + job queue + services, once per process
 src/jobs/              queues (BullMQ or in-process), job payloads, processors, webhook mailer
@@ -22,6 +24,7 @@ test/run.ts            end-to-end over HTTP on PostgreSQL + MongoDB, plus docs/e
 docs/                  A-to-Z docs (Mermaid), examples/*.graphql, LOCAL-AGENT-BRIEF.md
 schema.graphql         printed schema (generated)
 kits.json              kit refs for `npm run kits` (building unreleased kit branches from source)
+Dockerfile, docker-compose.yml, deploy/   image; PostgreSQL ← PgBouncer ← N api replicas ← nginx, Redis, worker (docs/17-scaling.md)
 ```
 
 ## Rules
@@ -52,7 +55,12 @@ kits.json              kit refs for `npm run kits` (building unreleased kit bran
     signals are collected by security-kit in the client; `src/graphql/device.ts` maps DeviceInput to auth-kit.
     Security headers and the client IP come from security-kit's `fastifySecurity` (never Fastify's own
     `req.ip` with a trust-all proxy setting: the left X-Forwarded-For entry is client-controlled).
-14. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
+14. **Replicas.** Nothing per-user lives in process memory when `REDIS_URL` is set: sessions, refresh tokens,
+    login limits and jobs are in Redis, data behind PgBouncer. Keep it that way (no module-level caches of
+    users or sessions), and keep the db layer free of session-level PostgreSQL features (named prepared
+    statements, `SET` without `LOCAL`, advisory locks held across transactions, `LISTEN`, temp tables):
+    PgBouncer runs in transaction mode and `npm test` runs the suite through it.
+15. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
 
 ## Commands
 

@@ -21,7 +21,8 @@ flowchart LR
 - **Two or more servers need Redis**: sessions, refresh tokens and login limits must be shared.
 - **Workers** (`node dist/worker.js`) need Redis and the same environment as the API (database,
   `JWT_SECRET`, signature files). Run one or more; see [16-worker.md](16-worker.md).
-- The process is stateless otherwise; scale horizontally.
+- The process is stateless otherwise; scale horizontally. [17-scaling.md](17-scaling.md) covers N replicas,
+  PgBouncer, readiness and graceful shutdown; `docker-compose.yml` runs all of it on one host.
 
 ## Build and run
 
@@ -32,8 +33,9 @@ NODE_ENV=production node dist/main.js     # API
 NODE_ENV=production node dist/worker.js   # worker (with REDIS_URL)
 ```
 
-A container image: Node 22 slim, copy `dist/`, `node_modules/` and `package.json`, run
-`node dist/main.js`, expose `PORT`. The PDF engine needs no system fonts (fonts are bundled), but
+A container image: the [`Dockerfile`](../Dockerfile) (Node 22 slim, `dist/`, production `node_modules/`;
+`node dist/main.js`, `node dist/worker.js` or `node dist/sync.js`; port 4000). It needs `NODE_AUTH_TOKEN` as a
+build secret for the kits. The PDF engine needs no system fonts (fonts are bundled), but
 report-kit's resvg is a native module: build the image on the same platform it runs on.
 
 ## Production checklist
@@ -52,7 +54,9 @@ report-kit's resvg is a native module: build the image on the same platform it r
 | ☐ | First organisation seeded (`npm run seed`) with the branch `stateCode` and the org GSTIN |
 | ☐ | Tax rules seeded **and confirmed by the CA** (`verifyWithCA`) |
 | ☐ | Database backups (point-in-time for Postgres), encrypted |
-| ☐ | Health check on `GET /health` (200 `{ ok: true }`, 503 when the database is down) |
+| ☐ | Readiness check on `GET /health` (200 `{ ok: true }`; 503 when the database or Redis is down, or while the replica shuts down); liveness on `GET /health?live=1` |
+| ☐ | More than one replica: `REDIS_URL` and the same `JWT_SECRET` on all, `DB_SYNC=false` with `node dist/sync.js` once per release, pools sized ([17-scaling.md](17-scaling.md)) |
+| ☐ | The orchestrator waits longer than `SHUTDOWN_DRAIN_MS` + `SHUTDOWN_TIMEOUT_MS` between SIGTERM and SIGKILL |
 | ☐ | Logs shipped; request bodies are not logged (they hold patient data) |
 
 ## Sending password-reset emails

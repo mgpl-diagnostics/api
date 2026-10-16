@@ -2,7 +2,7 @@ import { defineConfig } from "tsup";
 
 // The server bundle: our code only; the kits and drivers stay in node_modules.
 export default defineConfig({
-  entry: { main: "src/main.ts", worker: "src/worker.ts", index: "src/index.ts" },
+  entry: { main: "src/main.ts", worker: "src/worker.ts", sync: "src/sync.ts", index: "src/index.ts" },
   format: ["esm"],
   dts: { entry: { index: "src/index.ts" } },
   target: "node20",

@@ -1,11 +1,12 @@
 # @mgpl-diagnostics/api
 
-> The MGPL Diagnostics backend (Node.js ≥ 20, TypeScript): one GraphQL endpoint, `POST /graphql` (GraphQL Yoga on Fastify), for sign-in, users and roles, the test catalog, patients, bookings, samples, results and reports, billing, double-entry books, GST returns, B2B receivables, partner settlements, cash and bank, lock dates, CSV exports, and rendered report/invoice documents (base64 PDF or HTML). The kits (auth, db, catalog, report, invoice, tally, finance) are internal libraries behind a controller → service layer. PostgreSQL or MongoDB; Redis optional.
+> The MGPL Diagnostics backend (Node.js ≥ 20, TypeScript): one GraphQL endpoint, `POST /graphql` (GraphQL Yoga on Fastify), for sign-in, users and roles, the test catalog, patients, bookings, samples, results and reports, billing, double-entry books, GST returns, B2B receivables, partner settlements, cash and bank, lock dates, CSV exports, and rendered report/invoice documents (base64 PDF or HTML). The kits (auth, db, catalog, report, invoice, tally, finance) are internal libraries behind a controller → service layer. PostgreSQL (directly or through PgBouncer in transaction mode) or MongoDB; Redis optional for one server, required for more than one replica.
 
 Key facts for agents:
 - Layers: `src/schema` (SDL) → `src/controllers` (authorize, map) → `src/services` (kit calls) → kits. No REST routes except `GET /health`.
 - Auth: `login(input: { email, password, device })` returns an access JWT (15 min, Bearer) and a single-use refresh token; `refreshSession(refreshToken, device)` rotates them; a refresh from another deviceId ends the session (DEVICE_BINDING). Every request still checks the session and re-reads the user. `JWT_SECRET` required in production.
 - Worker: `src/worker.ts` (`npm run worker`) runs BullMQ jobs from Redis (`src/jobs/`): password-reset emails (MAIL_WEBHOOK_URL) and documents (`startDocumentJob`, `job(id)`). Without REDIS_URL jobs run in the API process. Permissions are `resource:action`, checked per branch with `authorize(ctx, perm, branchId)`.
+- Scaling (docs/17-scaling.md): N replicas behind a load balancer share Redis (sessions, login limits, jobs), JWT_SECRET and PgBouncer (DATABASE_URL → pgbouncer:6432; `npm test` runs the suite through it). DB_POOL_* size each process's pool; DB_SYNC=false on replicas with `node dist/sync.js` once per release; GET /health is readiness (?live=1 liveness); SIGTERM drains (SHUTDOWN_DRAIN_MS, SHUTDOWN_TIMEOUT_MS). docker-compose.yml runs PostgreSQL ← PgBouncer ← api × N ← nginx, Redis, worker.
 - Tenant isolation: orgId and actorId come from the session, never from arguments; every id is checked against the organisation.
 - Errors carry `extensions.code`: UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, BAD_USER_INPUT, CONFLICT, PERIOD_LOCKED, CREDIT_LIMIT_EXCEEDED, plus auth-kit codes. Unknown errors are masked.
 - Money is integer paise; days are IST "YYYY-MM-DD"; the financial year is April–March. Billing needs the branch's GST stateCode; GSTR-1/3B need the organisation's GSTIN.
@@ -15,7 +16,7 @@ Key facts for agents:
 ## Docs
 
 - [README](README.md): what it is, quick start
-- [docs/README.md](docs/README.md): index of the A-to-Z docs (architecture, getting started, API reference, errors, auth, flows, documents, configuration, data and money, testing, deployment, adding a feature, client, glossary)
+- [docs/README.md](docs/README.md): index of the A-to-Z docs (architecture, getting started, API reference, errors, auth, flows, documents, configuration, data and money, testing, deployment, adding a feature, client, glossary, worker, scaling)
 - [docs/04-api-reference.md](docs/04-api-reference.md): every operation with its permission
 - [docs/LOCAL-AGENT-BRIEF.md](docs/LOCAL-AGENT-BRIEF.md): releases, org settings and deployment to do outside this repo
 - [AGENTS.md](AGENTS.md): map and rules
