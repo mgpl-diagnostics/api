@@ -17,7 +17,8 @@ console.log(`[worker] queues ${workers.workers.map((w) => w.name).join(", ")} on
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
-    // finish the jobs in hand, then stop
+    // finish the jobs in hand, then stop; give up after SHUTDOWN_TIMEOUT_MS (BullMQ retries a job cut short)
+    setTimeout(() => process.exit(1), config.shutdown.timeoutMs).unref();
     workers.close().then(() => container.close()).then(() => process.exit(0), () => process.exit(1));
   });
 }

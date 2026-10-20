@@ -1,0 +1,135 @@
+# The whole backend on one host: PostgreSQL ← PgBouncer ← N api replicas ← nginx, plus Redis and the worker.
+# Guide: docs/17-scaling.md.
+#
+#   cp .env.example .env                        # set JWT_SECRET, CORS_ORIGINS, POSTGRES_PASSWORD, …
+#   NODE_AUTH_TOKEN=… docker compose build       # the kits come from GitHub Packages (read:packages)
+#   docker compose up -d                         # API_REPLICAS replicas (default 2) on http://localhost:8080
+#   docker compose up -d --scale api=4           # more or fewer, at any time
+#
+# The api and the worker read .env too; the values below (database, Redis, proxy) win over it, because the
+# services find each other by name inside this network.
+name: mgpl
+
+# api and worker run the image that db-sync builds (one build, three commands)
+x-api: &api
+  image: mgpl-api
+  pull_policy: never
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  depends_on:
+    db-sync: { condition: service_completed_successfully }
+    pgbouncer: { condition: service_started }
+    redis: { condition: service_healthy }
+  # real signatures for reports and invoices: mount them read-only and set MGPL_SIGNATURE_*_FILE in .env
+  # volumes: ["/secure/mgpl-signatures:/secure:ro"]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: mgpl
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    # PgBouncer keeps the connections to PostgreSQL few; this only has to cover its pool plus db-sync and admin
+    command: postgres -c max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mgpl"]
+      interval: 5s
+      retries: 20
+
+  # Connection pooler: every api replica and worker connects here, not to PostgreSQL. Transaction pooling
+  # (the default) gives a server connection to a client only for the length of one transaction.
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/mgpl
+      AUTH_TYPE: scram-sha-256
+      LISTEN_PORT: 6432
+      POOL_MODE: ${PGBOUNCER_POOL_MODE:-transaction}
+      DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:-20}
+      MIN_POOL_SIZE: ${PGBOUNCER_MIN_POOL_SIZE:-0}
+      RESERVE_POOL_SIZE: ${PGBOUNCER_RESERVE_POOL_SIZE:-5}
+      MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-500}
+      MAX_DB_CONNECTIONS: ${PGBOUNCER_MAX_DB_CONNECTIONS:-50}
+      ADMIN_USERS: postgres
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # AOF: queued emails and sessions survive a Redis restart
+    command: redis-server --appendonly yes
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  # Creates missing tables once per `up`, straight on PostgreSQL, before any replica starts (they run with DB_SYNC=false).
+  db-sync:
+    image: mgpl-api
+    build:
+      context: .
+      secrets: [npm_token]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_BACKEND: pg
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/mgpl
+    command: ["node", "dist/sync.js"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    <<: *api
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4000
+      DB_BACKEND: pg
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@pgbouncer:6432/mgpl
+      DB_SYNC: "false"
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      REDIS_URL: redis://redis:6379
+      # nginx below is the one proxy in front of the replicas (add one per proxy in front of nginx)
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+    deploy:
+      replicas: ${API_REPLICAS:-2}
+    # docker compose stop: SIGTERM, then SIGKILL after this; longer than SHUTDOWN_DRAIN_MS + SHUTDOWN_TIMEOUT_MS
+    stop_grace_period: 40s
+
+  worker:
+    <<: *api
+    command: ["node", "dist/worker.js"]
+    environment:
+      DB_BACKEND: pg
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@pgbouncer:6432/mgpl
+      DB_SYNC: "false"
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      REDIS_URL: redis://redis:6379
+    healthcheck:
+      disable: true
+    stop_grace_period: 40s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports: ["${HTTP_PORT:-8080}:80"]
+    volumes: [./deploy/nginx.conf:/etc/nginx/nginx.conf:ro]
+    depends_on: [api]
+
+secrets:
+  npm_token:
+    environment: NODE_AUTH_TOKEN
+
+volumes:
+  pgdata:
+  redisdata:

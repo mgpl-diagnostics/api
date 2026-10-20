@@ -18,6 +18,8 @@ flowchart LR
 | Area | What the suite proves |
 |---|---|
 | Server | `/health` and `{ health }`, introspection off when `INTROSPECTION=0`, depth limit 12 |
+| PgBouncer | The whole PostgreSQL suite again through PgBouncer in transaction mode (`pgbouncer` on the PATH or `PGBOUNCER_BIN`; skipped with a note otherwise) |
+| Replicas | Two API servers sharing PgBouncer and Redis: a session, a refresh and a logout cross replicas; 16 concurrent invoices with unique numbers over a 3-connection server pool; shared login limits; draining and shutdown |
 | Auth | no token → `UNAUTHENTICATED`, wrong password → `INVALID_CREDENTIALS`, login, viewer (null without a token), weak password, reset link through the mailer (unknown emails not revealed), reset ends old sessions, disable signs out at once, `mySessions`, logout |
 | Permissions | front desk cannot read the books; registers in branch A, not B; lists show only the viewer's branches; discounts need `invoice:discount`; nested vouchers hidden without `accounts:read` |
 | Tenancy | another organisation cannot read the invoice, the patient, or print it; cannot post into its ledgers |

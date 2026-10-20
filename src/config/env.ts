@@ -11,7 +11,12 @@ export interface Config {
   port: number;
   /** URL path of the one GraphQL endpoint. */
   graphqlPath: string;
-  db: { backend: DbBackend; url: string };
+  /**
+   * The database. `url` may point at PgBouncer instead of PostgreSQL (docs/17-scaling.md); `pool` sizes this
+   * process's own connection pool (Sequelize for pg, the MongoDB driver for mongo); `sync` creates missing
+   * tables / indexes on start (turn it off on all but one replica, or run it once per release).
+   */
+  db: { backend: DbBackend; url: string; sync: boolean; pool: { max: number; min: number; idleMs: number; acquireMs: number } };
   /** Sessions, reset tokens, rate limits and the read cache. Without it they live in process memory (one server only). */
   redisUrl: string | null;
   /** Origins allowed to call the API from a browser; "*" only in development. */
@@ -52,6 +57,12 @@ export interface Config {
   smtp: { url: string; from: string } | null;
   /** Optional HTTP relay for emails sent by the worker: POST { to, subject, text } as JSON. */
   mailWebhookUrl: string | null;
+  /**
+   * Graceful shutdown on SIGTERM / SIGINT: GET /health answers 503 at once, the server keeps serving for
+   * `drainMs` so the load balancer stops sending traffic, then stops accepting connections and waits for the
+   * requests in flight; after `timeoutMs` in all it exits anyway.
+   */
+  shutdown: { drainMs: number; timeoutMs: number };
 }
 
 /**
@@ -84,6 +95,15 @@ function hops(v: string | undefined): number {
   return int(v, 0);
 }
 
+/** DB_POOL_*: connections this process keeps open (to PgBouncer or the database). Replicas × max must fit the server side. */
+function dbPool(env: Record<string, string | undefined>): Config["db"]["pool"] {
+  const max = int(env.DB_POOL_MAX, 10);
+  const min = int(env.DB_POOL_MIN, 0);
+  if (max < 1) throw new Error("DB_POOL_MAX must be at least 1");
+  if (min > max) throw new Error(`DB_POOL_MIN (${min}) cannot be larger than DB_POOL_MAX (${max})`);
+  return { max, min, idleMs: int(env.DB_POOL_IDLE_MS, 10_000), acquireMs: int(env.DB_POOL_ACQUIRE_MS, 30_000) };
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const mode = env.NODE_ENV === "production" ? "production" : env.NODE_ENV === "test" ? "test" : "development";
   const dev = mode !== "production";
@@ -111,7 +131,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     host: env.HOST ?? "0.0.0.0",
     port: int(env.PORT, 4000),
     graphqlPath: env.GRAPHQL_PATH ?? "/graphql",
-    db: { backend, url },
+    db: {
+      backend,
+      url,
+      sync: bool(env.DB_SYNC, true),
+      pool: dbPool(env),
+    },
     redisUrl: env.REDIS_URL || null,
     corsOrigins,
     graphiql: bool(env.GRAPHIQL, dev),
@@ -132,5 +157,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     jobs: { prefix: env.QUEUE_PREFIX || "mgpl", concurrency: Math.max(1, int(env.WORKER_CONCURRENCY, 4)), keepResultsMs: int(env.JOB_RESULT_TTL_MS, 3600_000) },
     smtp: smtpUrl ? { url: smtpUrl, from: env.MAIL_FROM || "MGPL Diagnostics <no-reply@localhost.localdomain>" } : null,
     mailWebhookUrl: env.MAIL_WEBHOOK_URL || null,
+    shutdown: { drainMs: int(env.SHUTDOWN_DRAIN_MS, mode === "production" ? 5_000 : 0), timeoutMs: int(env.SHUTDOWN_TIMEOUT_MS, 30_000) },
   };
 }

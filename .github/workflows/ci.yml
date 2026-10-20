@@ -37,10 +37,14 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run typecheck
-      - name: End-to-end tests (GraphQL over HTTP, tokens, worker on Redis, client SDK) on PostgreSQL and MongoDB
+      # the [pgbouncer] and [replicas] checks run the API through PgBouncer in transaction mode
+      - name: Install PgBouncer
+        run: sudo apt-get update -q && sudo apt-get install -y -q pgbouncer
+      - name: End-to-end tests (GraphQL over HTTP, tokens, worker on Redis, client SDK) on PostgreSQL, PostgreSQL through PgBouncer and MongoDB
         run: npm test
         env:
           REDIS_URL: redis://localhost:6379
+          PGBOUNCER_BIN: /usr/sbin/pgbouncer
       - run: npm run build
       - name: schema.graphql is up to date (run `npm run schema` and commit if this fails)
         run: npm run schema && git diff --exit-code -- schema.graphql
