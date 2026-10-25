@@ -20,6 +20,8 @@ export interface RequestContext extends AuthContext {
   token: string | null;
   ip?: string;
   userAgent?: string;
+  /** TLS client fingerprint (JA4 / JA3) from the trusted TLS proxy (TLS_FINGERPRINT_HEADER); passed to auth-kit, which stores a hash. */
+  tlsFingerprint?: string;
   /** Per-request batch loaders, created on first use. */
   readonly loaders: Loaders;
 }
@@ -30,7 +32,7 @@ export function bearerToken(header: string | null | undefined): string | null {
 }
 
 /** Builds the request context from the Authorization header, through auth-kit. */
-export async function createContext(container: Container, req: { headers: Headers; ip?: string }): Promise<RequestContext> {
+export async function createContext(container: Container, req: { headers: Headers; ip?: string; tlsFingerprint?: string }): Promise<RequestContext> {
   const token = bearerToken(req.headers.get("authorization"));
   const auth = await container.auth.context(token);
   let loaders: Loaders | undefined;
@@ -42,6 +44,7 @@ export async function createContext(container: Container, req: { headers: Header
     token,
     ip: req.ip,
     userAgent: req.headers.get("user-agent") ?? undefined,
+    tlsFingerprint: req.tlsFingerprint,
     get loaders() {
       return (loaders ??= createLoaders(repos));
     },

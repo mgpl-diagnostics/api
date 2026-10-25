@@ -48,6 +48,7 @@ report-kit's resvg is a native module: build the image on the same platform it r
 | ☐ | `CORS_ORIGINS` lists exactly the app origins (no `*`) |
 | ☐ | `GRAPHIQL` and `INTROSPECTION` off (the defaults in production) |
 | ☐ | `TRUST_PROXY=true` behind one load balancer, `TRUST_PROXY=2` behind a CDN plus a load balancer (login limits use the client IP) |
+| ☐ | Optional: the proxy sets `x-ja4` to the client's JA4 TLS fingerprint and `TLS_FINGERPRINT_HEADER=x-ja4` ([06-auth-and-permissions.md](06-auth-and-permissions.md#tls-fingerprint)) |
 | ☐ | `MGPL_SAMPLES` off (the default in production) |
 | ☐ | Signature files mounted read-only; `MGPL_SIGNATURE_*_FILE` point at them |
 | ☐ | `PASSWORD_RESET_URL` points at the app's reset page, and a mailer is wired (below) |

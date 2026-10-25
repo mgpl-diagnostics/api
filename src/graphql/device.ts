@@ -1,5 +1,7 @@
 // Device signals (DeviceInput, collected in the client by @mgpl-diagnostics/security-kit) → auth-kit's
 // DeviceSignals. auth-kit cleans and caps the values (cleanDeviceSignals); this only maps shapes.
+// The TLS fingerprint is not a client signal: the trusted TLS proxy sends it (security-kit, src/server.ts)
+// and the controllers pass ctx.tlsFingerprint to auth-kit next to the device.
 import type { DeviceSignals } from "@mgpl-diagnostics/auth-kit";
 
 export interface DeviceInput {

@@ -3,7 +3,7 @@
   "kits": [
     {
       "name": "security-kit",
-      "ref": "v0.2.0"
+      "ref": "v0.3.0"
     },
     {
       "name": "mail-kit",
@@ -15,7 +15,7 @@
     },
     {
       "name": "auth-kit",
-      "ref": "v1.2.0"
+      "ref": "v1.3.0"
     },
     {
       "name": "db-kit",
