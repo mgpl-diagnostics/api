@@ -21,12 +21,12 @@ export class AuthService {
 
   // ---------------------------------------------------------------- sessions
 
-  login(input: { email: string; password: string; orgCode?: string | null; ip?: string; userAgent?: string; device?: DeviceSignals }) {
+  login(input: { email: string; password: string; orgCode?: string | null; ip?: string; userAgent?: string; device?: DeviceSignals; tlsFingerprint?: string }) {
     return this.auth.login({ ...input, orgCode: input.orgCode ?? undefined });
   }
 
   /** Spends a refresh token: a new access token and the next refresh token (rotation). */
-  async refresh(input: { refreshToken: string; ip?: string; userAgent?: string; device?: DeviceSignals }) {
+  async refresh(input: { refreshToken: string; ip?: string; userAgent?: string; device?: DeviceSignals; tlsFingerprint?: string }) {
     const p = await this.auth.refresh(input);
     return { token: p.accessToken, expiresAt: p.accessExpiresAt, ...p };
   }

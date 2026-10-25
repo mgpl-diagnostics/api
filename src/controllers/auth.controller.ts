@@ -39,11 +39,11 @@ export const authController = withErrorCodes({
 
   Mutation: {
     login: async (_: unknown, { input: { device, ...input } }: { input: { email: string; password: string; orgCode?: string | null; device?: DeviceInput | null } }, ctx: Ctx) => {
-      const r = await ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(device) });
+      const r = await ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(device), tlsFingerprint: ctx.tlsFingerprint });
       return { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt };
     },
     refreshSession: (_: unknown, a: { refreshToken: string; device?: DeviceInput | null }, ctx: Ctx) =>
-      ctx.services.auth.refresh({ refreshToken: a.refreshToken, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device) }),
+      ctx.services.auth.refresh({ refreshToken: a.refreshToken, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device), tlsFingerprint: ctx.tlsFingerprint }),
     logout: async (_: unknown, a: { refreshToken?: string | null }, ctx: Ctx) => {
       const token = a.refreshToken || ctx.token;
       if (!token) throw unauthenticated();

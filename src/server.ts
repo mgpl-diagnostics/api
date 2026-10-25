@@ -11,7 +11,8 @@ import { isDraining } from "./lifecycle";
 type ServerContext = { req: FastifyRequest; reply: FastifyReply };
 
 /** What fastifySecurity put on the request (falls back to the socket address). */
-const securityOf = (req: FastifyRequest): Pick<RequestSecurity, "ip"> => (req as FastifyRequest & { security?: RequestSecurity | null }).security ?? { ip: req.ip };
+const securityOf = (req: FastifyRequest): Pick<RequestSecurity, "ip" | "tlsFingerprint"> =>
+  (req as FastifyRequest & { security?: RequestSecurity | null }).security ?? { ip: req.ip, tlsFingerprint: null };
 
 /** Validation rules on every operation: depth limit, and no introspection unless enabled. */
 function rules(introspection: boolean): Plugin {
@@ -33,11 +34,13 @@ export async function buildServer(container: Container): Promise<FastifyInstance
 
   // security-kit: security headers on every response, and request.security = { ip, userAgent, … } with the
   // client IP taken from X-Forwarded-For only through the configured number of proxies (TRUST_PROXY).
-  // CORS stays with Yoga below. GraphiQL (development) loads scripts, so it gets no CSP.
+  // With TLS_FINGERPRINT_HEADER, request.security.tlsFingerprint is the JA4/JA3 the TLS-terminating proxy
+  // sent (only through those trusted proxies). CORS stays with Yoga below. GraphiQL (development) loads scripts, so it gets no CSP.
   await app.register(
     fastifySecurity({
       headers: { hsts: config.env === "production" ? 31_536_000 : false, csp: config.graphiql ? false : API_CSP },
       trustedHops: config.trustedHops,
+      tlsFingerprintHeader: config.tlsFingerprintHeader ?? undefined,
     }),
   );
 
@@ -51,7 +54,10 @@ export async function buildServer(container: Container): Promise<FastifyInstance
     cors: { origin: config.corsOrigins.includes("*") ? "*" : config.corsOrigins, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["content-type", "authorization"] },
     logging: config.env === "test" ? false : "warn",
     plugins: [rules(config.introspection)],
-    context: ({ request, req }) => createContext(container, { headers: request.headers, ip: securityOf(req).ip ?? undefined }),
+    context: ({ request, req }) => {
+      const sec = securityOf(req);
+      return createContext(container, { headers: request.headers, ip: sec.ip ?? undefined, tlsFingerprint: sec.tlsFingerprint?.value });
+    },
   });
 
   app.route({
