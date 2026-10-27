@@ -194,6 +194,9 @@ async function suite(db: Db, tag: string) {
   ok(returns.data?.gstr3b.verifyWithCA.length > 0 && Array.isArray(returns.data.gstr1.docs), `[${tag}] gstr1 + gstr3b data, with the verify-with-CA list`);
   const csv = await gql(owner, "{ exportTrialBalance { fileName content } }");
   ok(/TOTAL/.test(csv.data?.exportTrialBalance.content ?? ""), `[${tag}] exportTrialBalance CSV ends with a TOTAL row`);
+  await gql(owner, "mutation($i: PostVoucherInput!) { postVoucher(input: $i) { id } }", { i: { branchId: a.branch.id, type: "journal", narration: "=cmd|'/c calc'!A1", entries: [{ ledgerId: cash.id, debitPaise: 100 }, { ledgerId: capital.id, creditPaise: 100 }] } });
+  const dayBookCsv = (await gql(owner, "query($f: DateTime!, $t: DateTime!) { exportDayBook(from: $f, to: $t) { content } }", { f: yearRange.from, t: yearRange.to })).data?.exportDayBook.content ?? "";
+  ok(dayBookCsv.includes("'=cmd|'/c calc'!A1") && !/(^|,)=cmd/m.test(dayBookCsv), `[${tag}] exports defuse formula text (CSV injection, finance-kit 1.0.1)`);
   const partner = await gql(owner, 'mutation($b: ID!) { createPartner(input: { code: "cc1", name: "Collection Centre One", kind: collection_centre, branchId: $b, pan: "ABCDE1234F" }) { id branch { code } } }', { b: branchB.id });
   ok(partner.data?.createPartner.branch.code === "B01", `[${tag}] createPartner on branch B`);
   const agr = await gql(owner, 'mutation($p: ID!, $d: Day!) { addAgreement(input: { partnerId: $p, kind: revenue_share, shareBp: 2500, effectiveFrom: $d }) { id shareBp } }', { p: partner.data?.createPartner.id, d: "2026-04-01" });
