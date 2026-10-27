@@ -1,5 +1,13 @@
 import { NotFoundError, type Id, type Repo } from "@mgpl-diagnostics/db-kit";
 
+/** The actor lacks authority for this change (mapped to FORBIDDEN). */
+export class ForbiddenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+}
+
 /** The entity when it belongs to `orgId`, otherwise null (tenant isolation). */
 export const owned = <T extends { orgId: Id }>(entity: T | null | undefined, orgId: Id): T | null => (entity && entity.orgId === orgId ? entity : null);
 

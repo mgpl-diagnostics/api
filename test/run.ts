@@ -82,6 +82,20 @@ async function suite(db: Db, tag: string) {
   ok(code(await gql(owner, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "W", email: "w@apl.test", password: "password", roles: [{ role: "front_desk" }] } })) === "WEAK_PASSWORD", `[${tag}] weak password → WEAK_PASSWORD`);
   const desk = await login("desk@apl.test", "Counter-Shift-7391");
 
+  // ---------------------------------------------------------------- no privilege escalation through user management
+  await gql(owner, 'mutation { upsertRole(input: { key: "user_manager", name: "User manager", permissions: ["user:read", "user:create", "user:update", "role:read"] }) { key } }');
+  await gql(owner, 'mutation { upsertRole(input: { key: "user_viewer", name: "User viewer", permissions: ["user:read"] }) { key } }');
+  await gql(owner, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "Manager", email: "um@apl.test", password: "Counter-Shift-7391", roles: [{ role: "user_manager" }] } });
+  const um = await login("um@apl.test", "Counter-Shift-7391");
+  const umId = (await gql(um, "{ viewer { user { id } } }")).data?.viewer.user.id;
+  const mint = await gql(um, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "Mint", email: "mint@apl.test", password: "Counter-Shift-7391", roles: [{ role: "owner" }] } });
+  const self = await gql(um, "mutation($u: ID!) { setUserRoles(userId: $u, roles: [{ role: \"owner\" }]) { id } }", { u: umId });
+  const ownerId = (await gql(owner, "{ viewer { user { id } } }")).data?.viewer.user.id;
+  const takeover = await gql(um, "mutation($u: ID!) { setUserPassword(userId: $u, newPassword: \"Granite-Orbit-4471\") }", { u: ownerId });
+  ok(code(mint) === "FORBIDDEN" && code(self) === "FORBIDDEN" && code(takeover) === "FORBIDDEN", `[${tag}] a custom role with user:create / user:update cannot mint an owner, promote itself, or set the owner's password`);
+  ok(!!(await gql(um, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "Viewer", email: "uv@apl.test", password: "Counter-Shift-7391", roles: [{ role: "user_viewer" }] } })).data?.createUser.id, `[${tag}] …but can grant a role whose permissions it holds`);
+  ok(code(await gql(um, 'mutation { upsertRole(input: { key: "x_all", name: "X", permissions: ["*:*"] }) { key } }')) === "FORBIDDEN", `[${tag}] upsertRole needs role:manage`);
+
   // ---------------------------------------------------------------- catalog (public)
   const cat = await gql(null, '{ catalogSearch(query: "cbc", limit: 3) { test { code name pricePaise sampleType parameters { name unit range(sex: male) } } } priceQuote(tests: ["CBC", "NOPE"]) { total totalPaise unknown } }');
   const cbc = cat.data?.catalogSearch[0]?.test;
@@ -243,6 +257,12 @@ async function suite(db: Db, tag: string) {
   ok(code(await gql(null, "{ __schema { types { name } } }")) === "GRAPHQL_VALIDATION_FAILED", `[${tag}] introspection disabled when INTROSPECTION=0`);
   const deep = `{ invoices ${"{ booking { invoice ".repeat(7)}{ id }${" } }".repeat(7)} }`;
   ok(/levels deep/.test((await gql(otherOwner, deep)).errors?.[0]?.message ?? ""), `[${tag}] queries deeper than 12 levels are refused`);
+  const aliases = (n: number, f: string) => `{ ${Array.from({ length: n }, (_, i) => `a${i}: ${f}`).join(" ")} }`;
+  ok(/fields; the limit/.test((await gql(otherOwner, aliases(1000, "health { ok }"))).errors?.[0]?.message ?? ""), `[${tag}] 1,000 aliases are refused (field limit)`);
+  ok(/top-level fields/.test((await gql(otherOwner, aliases(21, "trialBalance { differencePaise }"))).errors?.[0]?.message ?? ""), `[${tag}] more than 20 top-level fields are refused`);
+  ok(/documents; the limit/.test((await gql(otherOwner, aliases(4, "letterhead { byteLength }"))).errors?.[0]?.message ?? ""), `[${tag}] more than 3 documents in one request are refused`);
+  const typo = (await gql(null, "{ organizaton { id } }")).errors?.[0]?.message ?? "";
+  ok(/organizaton/.test(typo) && !/Did you mean/.test(typo), `[${tag}] no "Did you mean" field suggestions when introspection is off`);
 
   await app.close();
 }

@@ -1,10 +1,10 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { NoSchemaIntrospectionCustomRule } from "graphql";
+import { GraphQLError, NoSchemaIntrospectionCustomRule } from "graphql";
 import { createYoga, type Plugin } from "graphql-yoga";
 import { API_CSP, fastifySecurity, type RequestSecurity } from "@mgpl-diagnostics/security-kit/server";
 import type { Container } from "./container";
 import { createContext, type RequestContext } from "./graphql/context";
-import { depthLimit } from "./graphql/limits";
+import { costLimit, depthLimit } from "./graphql/limits";
 import { buildSchema } from "./graphql/schema";
 import { isDraining } from "./lifecycle";
 
@@ -14,12 +14,24 @@ type ServerContext = { req: FastifyRequest; reply: FastifyReply };
 const securityOf = (req: FastifyRequest): Pick<RequestSecurity, "ip" | "tlsFingerprint"> =>
   (req as FastifyRequest & { security?: RequestSecurity | null }).security ?? { ip: req.ip, tlsFingerprint: null };
 
-/** Validation rules on every operation: depth limit, and no introspection unless enabled. */
+/**
+ * Validation rules on every operation: depth and cost limits, and no introspection unless enabled. The
+ * largest client operation selects ~120 fields with one top-level field, so the limits leave headroom.
+ * Without introspection, "Did you mean …?" hints are removed too (they would spell out the schema).
+ */
+export const LIMITS = { depth: 12, fields: 500, rootFields: 20, documents: 3 } as const;
 function rules(introspection: boolean): Plugin {
   return {
     onValidate({ addValidationRule }) {
-      addValidationRule(depthLimit(12));
+      addValidationRule(depthLimit(LIMITS.depth));
+      addValidationRule(costLimit(LIMITS.fields, LIMITS.documents, LIMITS.rootFields));
       if (!introspection) addValidationRule(NoSchemaIntrospectionCustomRule);
+      return introspection
+        ? undefined
+        : ({ result, setResult }) => {
+            if (result.some((e) => / Did you mean .*\?$/.test(e.message)))
+              setResult(result.map((e) => (/ Did you mean .*\?$/.test(e.message) ? new GraphQLError(e.message.replace(/ Did you mean .*\?$/, ""), { nodes: e.nodes, extensions: e.extensions }) : e)));
+          };
     },
   };
 }
