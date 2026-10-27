@@ -1,8 +1,8 @@
-import { PERMISSIONS, SYSTEM_ROLES, type Auth, type DeviceSignals, type PublicUser } from "@mgpl-diagnostics/auth-kit";
+import { can, permissionMatches, PERMISSIONS, roleMap, SYSTEM_ROLES, type Auth, type DeviceSignals, type PublicUser } from "@mgpl-diagnostics/auth-kit";
 import { ConflictError, createUser, NotFoundError, ValidationError, type Id, type Repositories, type Role, type RoleAssignment, type User } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
 import type { JobQueue } from "../jobs/types";
-import { mustOwn } from "./util";
+import { ForbiddenError, mustOwn } from "./util";
 
 /** Sends password-reset links. Plug in email/SMS in the container; the API never returns reset tokens. */
 export interface Mailer {
@@ -103,7 +103,8 @@ export class AuthService {
   }
 
   async setUserRoles(actor: Actor, userId: Id, roles: RoleAssignment[]) {
-    mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    const target = mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    await this.assertCovers(actor, target.roles, "change the roles of");
     await this.assertRoles(actor, roles);
     const u = await this.repos.users.update(userId, { roles });
     await this.repos.audit.log({ orgId: actor.orgId, userId: actor.userId, action: "user.roles", entity: "user", entityId: userId });
@@ -112,7 +113,8 @@ export class AuthService {
 
   /** Disabling ends every session at once (auth-kit re-reads the user on each request). */
   async setUserStatus(actor: Actor, userId: Id, status: "active" | "disabled") {
-    mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    const target = mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    await this.assertCovers(actor, target.roles, status === "disabled" ? "disable" : "enable");
     if (userId === actor.userId && status === "disabled") throw new ConflictError("You cannot disable your own account");
     const u = await this.repos.users.update(userId, { status });
     if (status === "disabled") await this.auth.logoutAll(userId);
@@ -121,7 +123,8 @@ export class AuthService {
   }
 
   async setUserPassword(actor: Actor, userId: Id, newPassword: string) {
-    mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    const target = mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    await this.assertCovers(actor, target.roles, "set the password of");
     await this.auth.setPassword(userId, newPassword, actor.userId);
   }
 
@@ -143,6 +146,8 @@ export class AuthService {
       if (!/^([a-z_]+|\*):([a-z_]+|\*)$/.test(p)) throw new ValidationError(`Invalid permission "${p}"`);
     }
     const existing = await this.repos.roles.findOne({ orgId: actor.orgId, key });
+    const missing = await this.uncovered(actor, [{ permissions: input.permissions, branchId: null }]);
+    if (missing.length) throw new ForbiddenError(`A role cannot carry permissions you do not hold organisation-wide: ${missing.join(", ")}`);
     if (existing?.system) throw new ConflictError(`Role ${key} is a system role`);
     const role = existing
       ? await this.repos.roles.update(existing.id, { name: input.name, permissions: input.permissions })
@@ -169,5 +174,29 @@ export class AuthService {
       if (!keys.has(r.role)) throw new ValidationError(`Unknown role "${r.role}"`);
       if (r.branchId) mustOwn(await this.repos.branches.get(r.branchId), actor.orgId, "Branch", r.branchId);
     }
+    await this.assertCovers(actor, roles, "grant");
+  }
+
+  /**
+   * No escalation: the actor may grant (or manage a user holding) a role only when the actor holds every
+   * permission of that role, in the same branch or organisation-wide. Otherwise a custom "user manager"
+   * role with user:create could mint owners, or set an owner's password.
+   */
+  private async assertCovers(actor: Actor, roles: readonly RoleAssignment[], verb: string) {
+    const map = roleMap(await this.roles(actor));
+    const missing = await this.uncovered(actor, roles.map((r) => ({ permissions: map.get(r.role) ?? [], branchId: r.branchId ?? null })), map);
+    if (missing.length) throw new ForbiddenError(`You cannot ${verb} a role with permissions you do not hold: ${missing.join(", ")}`);
+  }
+
+  /** The concrete permissions in `grants` the actor does not hold (an organisation-wide grant needs organisation-wide roles). */
+  private async uncovered(actor: Actor, grants: { permissions: readonly string[]; branchId: Id | null }[], map?: Map<string, readonly string[]>) {
+    const roles = map ?? roleMap(await this.roles(actor));
+    const own = (await this.repos.users.get(actor.userId))?.roles ?? [];
+    const missing = new Set<string>();
+    for (const g of grants) {
+      const held = g.branchId ? own : own.filter((a) => !a.branchId);
+      for (const p of PERMISSIONS) if (g.permissions.some((x) => permissionMatches(x, p)) && !can(held, p, roles, g.branchId)) missing.add(p);
+    }
+    return [...missing];
   }
 }

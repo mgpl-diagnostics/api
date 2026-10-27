@@ -380,7 +380,7 @@ the per-request loaders; services never see GraphQL.
 flowchart TB
   subgraph HTTP["HTTP · src/server.ts"]
     F["Fastify<br/>POST /graphql · GET /health"]
-    Y["GraphQL Yoga<br/>CORS · masked errors · depth limit 12 · introspection switch"]
+    Y["GraphQL Yoga<br/>CORS · masked errors · depth and cost limits · introspection switch"]
   end
   subgraph GQL["GraphQL · src/graphql + src/schema"]
     SDL["SDL per module<br/>src/schema/*.graphql.ts"]
@@ -446,7 +446,7 @@ src/
     errors.ts           ERROR_CODES, toGraphQLError, withErrorCodes
     scalars.ts          DateTime, Day, JSON
     loaders.ts          per-request BatchLoader per entity (no N+1)
-    limits.ts           depthLimit
+    limits.ts           depthLimit, costLimit
     device.ts           DeviceInput (collected by security-kit in the client) → auth-kit DeviceSignals
   jobs/
     types.ts            QUEUES, job payloads, JobInfo, JobQueue, JobFailure
@@ -481,7 +481,7 @@ sequenceDiagram
   participant DB as Database
   Cl->>Fa: POST /graphql (Authorization: Bearer access JWT)
   Fa->>Yo: handleNodeRequestAndResponse
-  Yo->>Yo: parse, validate (depth ≤ 12, introspection rule)
+  Yo->>Yo: parse, validate (depth ≤ 12, cost limits, introspection rule)
   Yo->>Cx: build context
   Cx->>Au: context(t) → verifies the JWT, checks the session, re-reads the user
   Au-->>Cx: viewer, can(), branchesFor()
@@ -552,7 +552,7 @@ builds it from the environment. `close()` closes what the container opened.
    `branchScope`, which narrows to the branches where the user holds the permission.
 3. **Transactions.** Multi-record writes run in `repos.transaction()` inside the kits.
 4. **No N+1.** Nested fields (`Booking.patient`, `Invoice.branch`, …) go through per-request loaders.
-5. **Limits.** Query depth ≤ 12, list `limit` ≤ 200, request body ≤ 2 MB by default.
+5. **Limits.** Query depth ≤ 12; per operation ≤ 500 fields (aliases and fragment spreads count), ≤ 20 top-level fields and ≤ 3 document / export fields (`LIMITS` in `src/server.ts`; more documents go through `startDocumentJob`); list `limit` ≤ 200, request body ≤ 2 MB by default.
 
 
 ---
@@ -885,7 +885,7 @@ Every error in a response carries `extensions.code`. Clients switch on the code,
 | `RATE_LIMITED` | 429 | Too many attempts; `extensions.retryAfterMs` says how long to wait | Wait, then retry |
 | `WEAK_PASSWORD` | 400 | The new password fails the policy | Show the message |
 | `INVALID_TOKEN` | 400 | A reset token is unknown, used or expired | Request a new link |
-| `GRAPHQL_VALIDATION_FAILED` | 400 | The document is invalid (unknown field, depth > 12, introspection off) | Fix the query |
+| `GRAPHQL_VALIDATION_FAILED` | 400 | The document is invalid (unknown field, depth > 12, more than 500 fields / 20 top-level fields / 3 documents, introspection off; no "Did you mean" hints when introspection is off) | Fix the query |
 | `INTERNAL_SERVER_ERROR` | 500 | Anything else. The message is masked as "Unexpected error" | Retry later; check server logs |
 
 ## How errors are made
@@ -1052,7 +1052,14 @@ the user cannot do.
 | `accountant` | Payments, invoice cancellation, all `accounts:*` (books, GST, finance), audit |
 | `doctor` | Reads patients and reports |
 
-Organisations can add their own roles or override these with `upsertRole`.
+Organisations can add their own roles with `upsertRole` (system roles cannot be changed).
+
+**No escalation.** Granting a role (`createUser`, `setUserRoles`), managing a user (`setUserRoles`,
+`setUserPassword`, `disableUser`, `enableUser`) and defining a role (`upsertRole`) need, besides the
+permission itself, **every permission of the roles involved**, held in the same branch or
+organisation-wide (an organisation-wide grant needs organisation-wide roles). A custom "user manager"
+role with `user:create` can create front-desk users only if it holds the front desk's permissions, and
+can never mint an owner, promote itself, or set the owner's password: `FORBIDDEN`.
 
 ### How a resolver checks
 
@@ -1546,11 +1553,11 @@ flowchart LR
 
 | Area | What the suite proves |
 |---|---|
-| Server | `/health` and `{ health }`, introspection off when `INTROSPECTION=0`, depth limit 12 |
+| Server | `/health` and `{ health }`, introspection off when `INTROSPECTION=0` (and no field suggestions), depth limit 12, field / top-level / document limits |
 | PgBouncer | The whole PostgreSQL suite again through PgBouncer in transaction mode (`pgbouncer` on the PATH or `PGBOUNCER_BIN`; skipped with a note otherwise) |
 | Replicas | Two API servers sharing PgBouncer and Redis: a session, a refresh and a logout cross replicas; 16 concurrent invoices with unique numbers over a 3-connection server pool; shared login limits; draining and shutdown |
 | Auth | no token → `UNAUTHENTICATED`, wrong password → `INVALID_CREDENTIALS`, login, viewer (null without a token), weak password, reset link through the mailer (unknown emails not revealed), reset ends old sessions, disable signs out at once, `mySessions`, logout |
-| Permissions | front desk cannot read the books; registers in branch A, not B; lists show only the viewer's branches; discounts need `invoice:discount`; nested vouchers hidden without `accounts:read` |
+| Permissions | front desk cannot read the books; registers in branch A, not B; lists show only the viewer's branches; discounts need `invoice:discount`; nested vouchers hidden without `accounts:read`; a custom user-manager role cannot mint an owner, promote itself or set the owner's password |
 | Tenancy | another organisation cannot read the invoice, the patient, or print it; cannot post into its ledgers |
 | Catalog | search and price quote without sign-in |
 | Lab | patient → booking by catalog code → collect → receive → results with unit, range and flag from the catalog → unverified report does not print → verify, release → booking completed |
@@ -5863,6 +5870,7 @@ import { ConflictError, NotFoundError, PeriodLockedError, ValidationError } from
 import { CreditLimitError } from "@mgpl-diagnostics/finance-kit";
 import { HttpError } from "@mgpl-diagnostics/report-kit";
 import { GraphQLError } from "graphql";
+import { ForbiddenError } from "../services/util";
 
 /**
  * Every error code a client can see in `errors[].extensions.code`. A public contract: add codes,
@@ -5890,6 +5898,7 @@ export const badInput = (message: string) => apiError("BAD_USER_INPUT", message,
 export function toGraphQLError(e: unknown): unknown {
   if (e instanceof GraphQLError) return e;
   if (e instanceof AuthError) return apiError(e.code as ErrorCode, e.message, e.statusCode, e.details.retryAfterMs ? { retryAfterMs: e.details.retryAfterMs } : {});
+  if (e instanceof ForbiddenError) return apiError("FORBIDDEN", e.message, 403);
   if (e instanceof PeriodLockedError) return apiError("PERIOD_LOCKED", e.message, 409);
   if (e instanceof CreditLimitError) return apiError("CREDIT_LIMIT_EXCEEDED", e.message, 409);
   if (e instanceof NotFoundError) return apiError("NOT_FOUND", e.message, 404);
@@ -5992,6 +6001,52 @@ export function depthLimit(max: number) {
       OperationDefinition(op) {
         const depth = depthOf(op.selectionSet, 0, new Set());
         if (depth > max) context.reportError(new GraphQLError(`Query is ${depth} levels deep; the limit is ${max}`, { extensions: { code: "BAD_USER_INPUT" } }));
+      },
+    };
+  };
+}
+
+/** Root fields that render a PDF / HTML document or build a CSV: CPU-heavy, so few per operation. */
+const DOCUMENT_FIELD = /^(bookingReportDocument|invoiceDocument|renderReport|renderInvoice|letterhead|export[A-Z]\w*)$/;
+
+/**
+ * Rejects operations that select more than `maxFields` fields in all (fragments counted where they are
+ * spread, so aliases and repeated fragments add up), more than `maxRootFields` top-level fields, or more
+ * than `maxDocuments` document / export fields.
+ * Depth alone does not stop amplification: 1,000 aliases of `trialBalance` are only 2 levels deep.
+ */
+export function costLimit(maxFields: number, maxDocuments: number, maxRootFields = Infinity) {
+  return (context: ValidationContext): ASTVisitor => {
+    const fragments = new Map<string, FragmentDefinitionNode>();
+    for (const d of context.getDocument().definitions) if (d.kind === Kind.FRAGMENT_DEFINITION) fragments.set(d.name.value, d);
+    return {
+      OperationDefinition(op) {
+        let fields = 0;
+        let documents = 0;
+        const walk = (set: SelectionSetNode | undefined, root: boolean, seen: Set<string>) => {
+          if (!set || fields > maxFields) return;
+          for (const s of set.selections) {
+            if (s.kind === Kind.FIELD) {
+              fields++;
+              if (root && DOCUMENT_FIELD.test(s.name.value)) documents++;
+              walk(s.selectionSet, false, seen);
+            } else if (s.kind === Kind.INLINE_FRAGMENT) walk(s.selectionSet, root, seen);
+            else if (!seen.has(s.name.value)) walk(fragments.get(s.name.value)?.selectionSet, root, new Set(seen).add(s.name.value));
+          }
+        };
+        walk(op.selectionSet, true, new Set());
+        let roots = 0;
+        const countRoots = (set: SelectionSetNode | undefined, seen: Set<string>) => {
+          for (const s of set?.selections ?? []) {
+            if (s.kind === Kind.FIELD) roots++;
+            else if (s.kind === Kind.INLINE_FRAGMENT) countRoots(s.selectionSet, seen);
+            else if (!seen.has(s.name.value)) countRoots(fragments.get(s.name.value)?.selectionSet, new Set(seen).add(s.name.value));
+          }
+        };
+        countRoots(op.selectionSet, new Set());
+        if (roots > maxRootFields) context.reportError(new GraphQLError(`Query has ${roots} top-level fields; the limit is ${maxRootFields}`, { extensions: { code: "BAD_USER_INPUT" } }));
+        if (fields > maxFields) context.reportError(new GraphQLError(`Query selects more than ${maxFields} fields; the limit is ${maxFields}`, { extensions: { code: "BAD_USER_INPUT" } }));
+        if (documents > maxDocuments) context.reportError(new GraphQLError(`Query renders ${documents} documents; the limit is ${maxDocuments} per request (use startDocumentJob for more)`, { extensions: { code: "BAD_USER_INPUT" } }));
       },
     };
   };
@@ -7653,12 +7708,12 @@ export const organizationTypeDefs = /* GraphQL */ `
 
 ```ts
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { NoSchemaIntrospectionCustomRule } from "graphql";
+import { GraphQLError, NoSchemaIntrospectionCustomRule } from "graphql";
 import { createYoga, type Plugin } from "graphql-yoga";
 import { API_CSP, fastifySecurity, type RequestSecurity } from "@mgpl-diagnostics/security-kit/server";
 import type { Container } from "./container";
 import { createContext, type RequestContext } from "./graphql/context";
-import { depthLimit } from "./graphql/limits";
+import { costLimit, depthLimit } from "./graphql/limits";
 import { buildSchema } from "./graphql/schema";
 import { isDraining } from "./lifecycle";
 
@@ -7668,12 +7723,24 @@ type ServerContext = { req: FastifyRequest; reply: FastifyReply };
 const securityOf = (req: FastifyRequest): Pick<RequestSecurity, "ip" | "tlsFingerprint"> =>
   (req as FastifyRequest & { security?: RequestSecurity | null }).security ?? { ip: req.ip, tlsFingerprint: null };
 
-/** Validation rules on every operation: depth limit, and no introspection unless enabled. */
+/**
+ * Validation rules on every operation: depth and cost limits, and no introspection unless enabled. The
+ * largest client operation selects ~120 fields with one top-level field, so the limits leave headroom.
+ * Without introspection, "Did you mean …?" hints are removed too (they would spell out the schema).
+ */
+export const LIMITS = { depth: 12, fields: 500, rootFields: 20, documents: 3 } as const;
 function rules(introspection: boolean): Plugin {
   return {
     onValidate({ addValidationRule }) {
-      addValidationRule(depthLimit(12));
+      addValidationRule(depthLimit(LIMITS.depth));
+      addValidationRule(costLimit(LIMITS.fields, LIMITS.documents, LIMITS.rootFields));
       if (!introspection) addValidationRule(NoSchemaIntrospectionCustomRule);
+      return introspection
+        ? undefined
+        : ({ result, setResult }) => {
+            if (result.some((e) => / Did you mean .*\?$/.test(e.message)))
+              setResult(result.map((e) => (/ Did you mean .*\?$/.test(e.message) ? new GraphQLError(e.message.replace(/ Did you mean .*\?$/, ""), { nodes: e.nodes, extensions: e.extensions }) : e)));
+          };
     },
   };
 }
@@ -7754,11 +7821,11 @@ export async function buildServer(container: Container): Promise<FastifyInstance
 ## File: src/services/auth.service.ts
 
 ```ts
-import { PERMISSIONS, SYSTEM_ROLES, type Auth, type DeviceSignals, type PublicUser } from "@mgpl-diagnostics/auth-kit";
+import { can, permissionMatches, PERMISSIONS, roleMap, SYSTEM_ROLES, type Auth, type DeviceSignals, type PublicUser } from "@mgpl-diagnostics/auth-kit";
 import { ConflictError, createUser, NotFoundError, ValidationError, type Id, type Repositories, type Role, type RoleAssignment, type User } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
 import type { JobQueue } from "../jobs/types";
-import { mustOwn } from "./util";
+import { ForbiddenError, mustOwn } from "./util";
 
 /** Sends password-reset links. Plug in email/SMS in the container; the API never returns reset tokens. */
 export interface Mailer {
@@ -7859,7 +7926,8 @@ export class AuthService {
   }
 
   async setUserRoles(actor: Actor, userId: Id, roles: RoleAssignment[]) {
-    mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    const target = mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    await this.assertCovers(actor, target.roles, "change the roles of");
     await this.assertRoles(actor, roles);
     const u = await this.repos.users.update(userId, { roles });
     await this.repos.audit.log({ orgId: actor.orgId, userId: actor.userId, action: "user.roles", entity: "user", entityId: userId });
@@ -7868,7 +7936,8 @@ export class AuthService {
 
   /** Disabling ends every session at once (auth-kit re-reads the user on each request). */
   async setUserStatus(actor: Actor, userId: Id, status: "active" | "disabled") {
-    mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    const target = mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    await this.assertCovers(actor, target.roles, status === "disabled" ? "disable" : "enable");
     if (userId === actor.userId && status === "disabled") throw new ConflictError("You cannot disable your own account");
     const u = await this.repos.users.update(userId, { status });
     if (status === "disabled") await this.auth.logoutAll(userId);
@@ -7877,7 +7946,8 @@ export class AuthService {
   }
 
   async setUserPassword(actor: Actor, userId: Id, newPassword: string) {
-    mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    const target = mustOwn(await this.repos.users.get(userId), actor.orgId, "User", userId);
+    await this.assertCovers(actor, target.roles, "set the password of");
     await this.auth.setPassword(userId, newPassword, actor.userId);
   }
 
@@ -7899,6 +7969,8 @@ export class AuthService {
       if (!/^([a-z_]+|\*):([a-z_]+|\*)$/.test(p)) throw new ValidationError(`Invalid permission "${p}"`);
     }
     const existing = await this.repos.roles.findOne({ orgId: actor.orgId, key });
+    const missing = await this.uncovered(actor, [{ permissions: input.permissions, branchId: null }]);
+    if (missing.length) throw new ForbiddenError(`A role cannot carry permissions you do not hold organisation-wide: ${missing.join(", ")}`);
     if (existing?.system) throw new ConflictError(`Role ${key} is a system role`);
     const role = existing
       ? await this.repos.roles.update(existing.id, { name: input.name, permissions: input.permissions })
@@ -7925,6 +7997,30 @@ export class AuthService {
       if (!keys.has(r.role)) throw new ValidationError(`Unknown role "${r.role}"`);
       if (r.branchId) mustOwn(await this.repos.branches.get(r.branchId), actor.orgId, "Branch", r.branchId);
     }
+    await this.assertCovers(actor, roles, "grant");
+  }
+
+  /**
+   * No escalation: the actor may grant (or manage a user holding) a role only when the actor holds every
+   * permission of that role, in the same branch or organisation-wide. Otherwise a custom "user manager"
+   * role with user:create could mint owners, or set an owner's password.
+   */
+  private async assertCovers(actor: Actor, roles: readonly RoleAssignment[], verb: string) {
+    const map = roleMap(await this.roles(actor));
+    const missing = await this.uncovered(actor, roles.map((r) => ({ permissions: map.get(r.role) ?? [], branchId: r.branchId ?? null })), map);
+    if (missing.length) throw new ForbiddenError(`You cannot ${verb} a role with permissions you do not hold: ${missing.join(", ")}`);
+  }
+
+  /** The concrete permissions in `grants` the actor does not hold (an organisation-wide grant needs organisation-wide roles). */
+  private async uncovered(actor: Actor, grants: { permissions: readonly string[]; branchId: Id | null }[], map?: Map<string, readonly string[]>) {
+    const roles = map ?? roleMap(await this.roles(actor));
+    const own = (await this.repos.users.get(actor.userId))?.roles ?? [];
+    const missing = new Set<string>();
+    for (const g of grants) {
+      const held = g.branchId ? own : own.filter((a) => !a.branchId);
+      for (const p of PERMISSIONS) if (g.permissions.some((x) => permissionMatches(x, p)) && !can(held, p, roles, g.branchId)) missing.add(p);
+    }
+    return [...missing];
   }
 }
 ```
@@ -9329,6 +9425,14 @@ export class SettlementService {
 ```ts
 import { NotFoundError, type Id, type Repo } from "@mgpl-diagnostics/db-kit";
 
+/** The actor lacks authority for this change (mapped to FORBIDDEN). */
+export class ForbiddenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+}
+
 /** The entity when it belongs to `orgId`, otherwise null (tenant isolation). */
 export const owned = <T extends { orgId: Id }>(entity: T | null | undefined, orgId: Id): T | null => (entity && entity.orgId === orgId ? entity : null);
 
@@ -9508,6 +9612,20 @@ async function suite(db: Db, tag: string) {
   ok(code(await gql(owner, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "W", email: "w@apl.test", password: "password", roles: [{ role: "front_desk" }] } })) === "WEAK_PASSWORD", `[${tag}] weak password → WEAK_PASSWORD`);
   const desk = await login("desk@apl.test", "Counter-Shift-7391");
 
+  // ---------------------------------------------------------------- no privilege escalation through user management
+  await gql(owner, 'mutation { upsertRole(input: { key: "user_manager", name: "User manager", permissions: ["user:read", "user:create", "user:update", "role:read"] }) { key } }');
+  await gql(owner, 'mutation { upsertRole(input: { key: "user_viewer", name: "User viewer", permissions: ["user:read"] }) { key } }');
+  await gql(owner, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "Manager", email: "um@apl.test", password: "Counter-Shift-7391", roles: [{ role: "user_manager" }] } });
+  const um = await login("um@apl.test", "Counter-Shift-7391");
+  const umId = (await gql(um, "{ viewer { user { id } } }")).data?.viewer.user.id;
+  const mint = await gql(um, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "Mint", email: "mint@apl.test", password: "Counter-Shift-7391", roles: [{ role: "owner" }] } });
+  const self = await gql(um, "mutation($u: ID!) { setUserRoles(userId: $u, roles: [{ role: \"owner\" }]) { id } }", { u: umId });
+  const ownerId = (await gql(owner, "{ viewer { user { id } } }")).data?.viewer.user.id;
+  const takeover = await gql(um, "mutation($u: ID!) { setUserPassword(userId: $u, newPassword: \"Granite-Orbit-4471\") }", { u: ownerId });
+  ok(code(mint) === "FORBIDDEN" && code(self) === "FORBIDDEN" && code(takeover) === "FORBIDDEN", `[${tag}] a custom role with user:create / user:update cannot mint an owner, promote itself, or set the owner's password`);
+  ok(!!(await gql(um, "mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", { i: { name: "Viewer", email: "uv@apl.test", password: "Counter-Shift-7391", roles: [{ role: "user_viewer" }] } })).data?.createUser.id, `[${tag}] …but can grant a role whose permissions it holds`);
+  ok(code(await gql(um, 'mutation { upsertRole(input: { key: "x_all", name: "X", permissions: ["*:*"] }) { key } }')) === "FORBIDDEN", `[${tag}] upsertRole needs role:manage`);
+
   // ---------------------------------------------------------------- catalog (public)
   const cat = await gql(null, '{ catalogSearch(query: "cbc", limit: 3) { test { code name pricePaise sampleType parameters { name unit range(sex: male) } } } priceQuote(tests: ["CBC", "NOPE"]) { total totalPaise unknown } }');
   const cbc = cat.data?.catalogSearch[0]?.test;
@@ -9669,6 +9787,12 @@ async function suite(db: Db, tag: string) {
   ok(code(await gql(null, "{ __schema { types { name } } }")) === "GRAPHQL_VALIDATION_FAILED", `[${tag}] introspection disabled when INTROSPECTION=0`);
   const deep = `{ invoices ${"{ booking { invoice ".repeat(7)}{ id }${" } }".repeat(7)} }`;
   ok(/levels deep/.test((await gql(otherOwner, deep)).errors?.[0]?.message ?? ""), `[${tag}] queries deeper than 12 levels are refused`);
+  const aliases = (n: number, f: string) => `{ ${Array.from({ length: n }, (_, i) => `a${i}: ${f}`).join(" ")} }`;
+  ok(/fields; the limit/.test((await gql(otherOwner, aliases(1000, "health { ok }"))).errors?.[0]?.message ?? ""), `[${tag}] 1,000 aliases are refused (field limit)`);
+  ok(/top-level fields/.test((await gql(otherOwner, aliases(21, "trialBalance { differencePaise }"))).errors?.[0]?.message ?? ""), `[${tag}] more than 20 top-level fields are refused`);
+  ok(/documents; the limit/.test((await gql(otherOwner, aliases(4, "letterhead { byteLength }"))).errors?.[0]?.message ?? ""), `[${tag}] more than 3 documents in one request are refused`);
+  const typo = (await gql(null, "{ organizaton { id } }")).errors?.[0]?.message ?? "";
+  ok(/organizaton/.test(typo) && !/Did you mean/.test(typo), `[${tag}] no "Did you mean" field suggestions when introspection is off`);
 
   await app.close();
 }

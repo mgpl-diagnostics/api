@@ -9,7 +9,7 @@ the per-request loaders; services never see GraphQL.
 flowchart TB
   subgraph HTTP["HTTP · src/server.ts"]
     F["Fastify<br/>POST /graphql · GET /health"]
-    Y["GraphQL Yoga<br/>CORS · masked errors · depth limit 12 · introspection switch"]
+    Y["GraphQL Yoga<br/>CORS · masked errors · depth and cost limits · introspection switch"]
   end
   subgraph GQL["GraphQL · src/graphql + src/schema"]
     SDL["SDL per module<br/>src/schema/*.graphql.ts"]
@@ -75,7 +75,7 @@ src/
     errors.ts           ERROR_CODES, toGraphQLError, withErrorCodes
     scalars.ts          DateTime, Day, JSON
     loaders.ts          per-request BatchLoader per entity (no N+1)
-    limits.ts           depthLimit
+    limits.ts           depthLimit, costLimit
     device.ts           DeviceInput (collected by security-kit in the client) → auth-kit DeviceSignals
   jobs/
     types.ts            QUEUES, job payloads, JobInfo, JobQueue, JobFailure
@@ -110,7 +110,7 @@ sequenceDiagram
   participant DB as Database
   Cl->>Fa: POST /graphql (Authorization: Bearer access JWT)
   Fa->>Yo: handleNodeRequestAndResponse
-  Yo->>Yo: parse, validate (depth ≤ 12, introspection rule)
+  Yo->>Yo: parse, validate (depth ≤ 12, cost limits, introspection rule)
   Yo->>Cx: build context
   Cx->>Au: context(t) → verifies the JWT, checks the session, re-reads the user
   Au-->>Cx: viewer, can(), branchesFor()
@@ -181,4 +181,4 @@ builds it from the environment. `close()` closes what the container opened.
    `branchScope`, which narrows to the branches where the user holds the permission.
 3. **Transactions.** Multi-record writes run in `repos.transaction()` inside the kits.
 4. **No N+1.** Nested fields (`Booking.patient`, `Invoice.branch`, …) go through per-request loaders.
-5. **Limits.** Query depth ≤ 12, list `limit` ≤ 200, request body ≤ 2 MB by default.
+5. **Limits.** Query depth ≤ 12; per operation ≤ 500 fields (aliases and fragment spreads count), ≤ 20 top-level fields and ≤ 3 document / export fields (`LIMITS` in `src/server.ts`; more documents go through `startDocumentJob`); list `limit` ≤ 200, request body ≤ 2 MB by default.

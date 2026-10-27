@@ -26,7 +26,7 @@ Every error in a response carries `extensions.code`. Clients switch on the code,
 | `RATE_LIMITED` | 429 | Too many attempts; `extensions.retryAfterMs` says how long to wait | Wait, then retry |
 | `WEAK_PASSWORD` | 400 | The new password fails the policy | Show the message |
 | `INVALID_TOKEN` | 400 | A reset token is unknown, used or expired | Request a new link |
-| `GRAPHQL_VALIDATION_FAILED` | 400 | The document is invalid (unknown field, depth > 12, introspection off) | Fix the query |
+| `GRAPHQL_VALIDATION_FAILED` | 400 | The document is invalid (unknown field, depth > 12, more than 500 fields / 20 top-level fields / 3 documents, introspection off; no "Did you mean" hints when introspection is off) | Fix the query |
 | `INTERNAL_SERVER_ERROR` | 500 | Anything else. The message is masked as "Unexpected error" | Retry later; check server logs |
 
 ## How errors are made

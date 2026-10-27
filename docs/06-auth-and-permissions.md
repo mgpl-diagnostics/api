@@ -132,7 +132,14 @@ the user cannot do.
 | `accountant` | Payments, invoice cancellation, all `accounts:*` (books, GST, finance), audit |
 | `doctor` | Reads patients and reports |
 
-Organisations can add their own roles or override these with `upsertRole`.
+Organisations can add their own roles with `upsertRole` (system roles cannot be changed).
+
+**No escalation.** Granting a role (`createUser`, `setUserRoles`), managing a user (`setUserRoles`,
+`setUserPassword`, `disableUser`, `enableUser`) and defining a role (`upsertRole`) need, besides the
+permission itself, **every permission of the roles involved**, held in the same branch or
+organisation-wide (an organisation-wide grant needs organisation-wide roles). A custom "user manager"
+role with `user:create` can create front-desk users only if it holds the front desk's permissions, and
+can never mint an owner, promote itself, or set the owner's password: `FORBIDDEN`.
 
 ### How a resolver checks
 

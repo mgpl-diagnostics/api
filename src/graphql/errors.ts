@@ -3,6 +3,7 @@ import { ConflictError, NotFoundError, PeriodLockedError, ValidationError } from
 import { CreditLimitError } from "@mgpl-diagnostics/finance-kit";
 import { HttpError } from "@mgpl-diagnostics/report-kit";
 import { GraphQLError } from "graphql";
+import { ForbiddenError } from "../services/util";
 
 /**
  * Every error code a client can see in `errors[].extensions.code`. A public contract: add codes,
@@ -30,6 +31,7 @@ export const badInput = (message: string) => apiError("BAD_USER_INPUT", message,
 export function toGraphQLError(e: unknown): unknown {
   if (e instanceof GraphQLError) return e;
   if (e instanceof AuthError) return apiError(e.code as ErrorCode, e.message, e.statusCode, e.details.retryAfterMs ? { retryAfterMs: e.details.retryAfterMs } : {});
+  if (e instanceof ForbiddenError) return apiError("FORBIDDEN", e.message, 403);
   if (e instanceof PeriodLockedError) return apiError("PERIOD_LOCKED", e.message, 409);
   if (e instanceof CreditLimitError) return apiError("CREDIT_LIMIT_EXCEEDED", e.message, 409);
   if (e instanceof NotFoundError) return apiError("NOT_FOUND", e.message, 404);
