@@ -23,7 +23,7 @@
     "docs:reference": "tsx scripts/api-reference.ts"
   },
   "dependencies": {
-    "@graphql-tools/schema": "^10.1.5",
+    "@graphql-tools/schema": "^11.0.6",
     "@mgpl-diagnostics/auth-kit": "^1.3.0",
     "@mgpl-diagnostics/catalog-kit": "^1.0.0",
     "@mgpl-diagnostics/db-kit": "^2.0.0",
