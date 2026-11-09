@@ -8,6 +8,7 @@ import { deviceOf, type DeviceInput } from "../graphql/device";
 export const authController = withErrorCodes({
   Query: {
     viewer: (_: unknown, __: unknown, ctx: Ctx) => (ctx.viewer ? {} : null),
+    myOrganizations: (_: unknown, __: unknown, ctx: Ctx) => ctx.services.auth.organizations(actorOf(ctx)),
     mySessions: async (_: unknown, __: unknown, ctx: Ctx) => {
       const sessions = await ctx.services.auth.sessions(actorOf(ctx));
       return sessions.map((s) => ({ ...s, current: s.id === ctx.viewer!.sessionId, createdAt: new Date(s.createdAt), lastSeenAt: new Date(s.lastSeenAt), expiresAt: new Date(s.expiresAt), deviceId: s.device?.deviceId ?? null, deviceInfo: s.device?.info ?? null }));
@@ -40,6 +41,11 @@ export const authController = withErrorCodes({
   Mutation: {
     login: async (_: unknown, { input: { device, ...input } }: { input: { email: string; password: string; orgCode?: string | null; device?: DeviceInput | null } }, ctx: Ctx) => {
       const r = await ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(device), tlsFingerprint: ctx.tlsFingerprint });
+      return { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt };
+    },
+    switchOrganization: async (_: unknown, a: { orgCode: string; device?: DeviceInput | null }, ctx: Ctx) => {
+      if (!ctx.token) throw unauthenticated();
+      const r = await ctx.services.auth.switchOrganization({ token: ctx.token, orgCode: a.orgCode, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device), tlsFingerprint: ctx.tlsFingerprint });
       return { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt };
     },
     refreshSession: (_: unknown, a: { refreshToken: string; device?: DeviceInput | null }, ctx: Ctx) =>

@@ -14,6 +14,7 @@ export const ERROR_CODES = [
   "PERIOD_LOCKED", "CREDIT_LIMIT_EXCEEDED",
   // auth-kit's own codes, passed through
   "INVALID_CREDENTIALS", "ACCOUNT_DISABLED", "INVITE_PENDING", "ORG_REQUIRED", "RATE_LIMITED", "WEAK_PASSWORD", "INVALID_TOKEN",
+  "ORG_UNAVAILABLE",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -30,7 +31,13 @@ export const badInput = (message: string) => apiError("BAD_USER_INPUT", message,
 /** Domain errors from the kits → GraphQL errors with codes. Anything unknown is re-thrown (and masked by Yoga). */
 export function toGraphQLError(e: unknown): unknown {
   if (e instanceof GraphQLError) return e;
-  if (e instanceof AuthError) return apiError(e.code as ErrorCode, e.message, e.statusCode, e.details.retryAfterMs ? { retryAfterMs: e.details.retryAfterMs } : {});
+  if (e instanceof AuthError) {
+    const extra: Record<string, unknown> = {};
+    if (e.details.retryAfterMs) extra.retryAfterMs = e.details.retryAfterMs;
+    // ORG_REQUIRED: the labs whose account matched the password, for a pick list (ids stay on the server)
+    if (e.details.organizations?.length) extra.organizations = e.details.organizations.map((o) => ({ code: o.code, name: o.name }));
+    return apiError(e.code as ErrorCode, e.message, e.statusCode, extra);
+  }
   if (e instanceof ForbiddenError) return apiError("FORBIDDEN", e.message, 403);
   if (e instanceof PeriodLockedError) return apiError("PERIOD_LOCKED", e.message, 409);
   if (e instanceof CreditLimitError) return apiError("CREDIT_LIMIT_EXCEEDED", e.message, 409);
