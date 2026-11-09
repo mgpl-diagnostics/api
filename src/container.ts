@@ -83,7 +83,7 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
     (config.redisUrl
       ? createBullJobQueue({ redisUrl: config.redisUrl, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs })
       : createInlineJobQueue(() => jobDeps!, { keepResultsMs: config.jobs.keepResultsMs }));
-  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs });
+  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs, imports: config.imports });
   jobDeps = { repos: db.repos, auth, services };
   return {
     config,

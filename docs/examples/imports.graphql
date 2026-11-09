@@ -1,0 +1,33 @@
+# Partner-lab report imports (docs/18-imports.md). Variables: $pdf (base64), $bookingId.
+
+mutation ImportPartnerReport($pdf: String!, $bookingId: ID) {
+  importExternalReport(pdfBase64: $pdf, fileName: "partner.pdf", bookingId: $bookingId) {
+    id status lab labName patientMismatches warnings
+    tests {
+      index name accredited suggestedTestCode
+      parameters { name value unit range flag }
+      provenance { text }
+    }
+    signatories { id name medical source sha }
+  }
+}
+
+mutation ApplyPartnerReport($id: ID!) {
+  applyExternalReport(id: $id, mappings: [{ testIndex: 0, testCode: "LIPR" }], confirmPatientMismatch: false) {
+    id testCode status
+    provenance { performedBy accreditationText reportedBy { name } }
+  }
+}
+
+mutation NamePartnerSignature($sha: String!) {
+  nameExternalSignature(input: { sha: $sha, lab: hypatho, name: "Dr Example", qualification: "MD (Pathology)", role: pathologist }) {
+    id name signatureCount
+  }
+}
+
+query PartnerImports($bookingId: ID) {
+  externalReports(bookingId: $bookingId, first: 20) {
+    nodes { id status lab uploadedAt reports { id status } }
+    pageInfo { hasNextPage endCursor }
+  }
+}

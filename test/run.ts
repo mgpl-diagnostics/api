@@ -23,6 +23,9 @@ import type { Mailer } from "../src/services/auth.service";
 import { createMailer, memoryTransport } from "@mgpl-diagnostics/mail-kit";
 import { MGPL_LAB } from "@mgpl-diagnostics/report-kit";
 import { brandFromLab, mailerFromConfig, mailKitMailer } from "../src/jobs";
+import { importSuite } from "./imports";
+import { clinovaPdf } from "./partner-pdfs";
+import { PDFDocument } from "pdf-lib";
 
 let passed = 0;
 let failed = 0;
@@ -256,6 +259,13 @@ async function suite(db: Db, tag: string) {
   ok(code(await gql(otherAgain, "mutation($id: ID!) { startDocumentJob(input: { kind: invoice, invoiceId: $id }) { id } }", { id: invoiceId })) === "NOT_FOUND", `[${tag}] startDocumentJob on another organisation's invoice → NOT_FOUND`);
   ok(code(await gql(owner2, "mutation { startDocumentJob(input: { kind: booking_reports }) { id } }")) === "BAD_USER_INPUT", `[${tag}] startDocumentJob without bookingId → BAD_USER_INPUT`);
 
+  // ---------------------------------------------------------------- partner-lab imports (test/imports.ts)
+  const raw = async (token: string, body: string) => {
+    const res = await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, payload: body });
+    return { status: res.statusCode, json: res.json() as Gql };
+  };
+  await importSuite({ tag, gql, ok, owner: owner2, otherOwner: otherAgain, login, branchA: a.branch.id, branchB: branchB.id, orgId: a.org.id, repos: container.db.repos, services: container.services, raw });
+
   // ---------------------------------------------------------------- server guards
   ok(code(await gql(null, "{ __schema { types { name } } }")) === "GRAPHQL_VALIDATION_FAILED", `[${tag}] introspection disabled when INTROSPECTION=0`);
   const deep = `{ invoices ${"{ booking { invoice ".repeat(7)}{ id }${" } }".repeat(7)} }`;
@@ -387,7 +397,8 @@ async function workerSuite(pgUrl: string) {
   }
   const mails: { to: string; link: string }[] = [];
   const mailer: Mailer = { passwordReset: async (to, link) => void mails.push({ to: to.email, link }) };
-  const config = loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: pgUrl, REDIS_URL: url, QUEUE_PREFIX: `mgpl-test-${process.pid}` });
+  // IMPORT_INLINE_MAX_BYTES=1: every partner PDF is read by the worker
+  const config = loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: pgUrl, REDIS_URL: url, QUEUE_PREFIX: `mgpl-test-${process.pid}`, IMPORT_INLINE_MAX_BYTES: "1" });
   const api = await createContainer({ config, mailer });
   const app = await buildServer(api);
   const worker = startWorkers(api.jobDeps, { redisUrl: url, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs, concurrency: 2 });
@@ -425,6 +436,23 @@ async function workerSuite(pgUrl: string) {
     ok(done?.document.html.includes("<html"), "[worker] the worker rendered the invoice; job(id) returns it");
     const failed = (await post('mutation { startDocumentJob(input: { kind: invoice, invoiceId: "00000000-0000-4000-8000-000000000000" }) { id } }', {}, refreshed.accessToken));
     ok(failed.errors?.[0]?.extensions?.code === "NOT_FOUND", "[worker] unknown invoice → NOT_FOUND before queueing");
+
+    // partner-lab import through the worker: the job carries the stored file's id, never the PDF
+    const branchId = (await post("{ externalReports(first: 1) { nodes { branchId } } }", {}, refreshed.accessToken)).data?.externalReports.nodes[0]?.branchId;
+    const copy = await PDFDocument.load(await clinovaPdf());
+    copy.setTitle("worker copy");
+    const pdfBase64 = Buffer.from(await copy.save()).toString("base64");
+    const imported = (await post("mutation($p: String!, $b: ID) { importExternalReport(pdfBase64: $p, branchId: $b) { id lab status tests { name } } }", { p: pdfBase64, b: branchId }, refreshed.accessToken)).data?.importExternalReport;
+    ok(imported?.lab === "clinova" && imported.status === "extracted" && imported.tests.length === 2, "[worker] importExternalReport over IMPORT_INLINE_MAX_BYTES: read by the worker, the API waits for it");
+    const blank = await PDFDocument.create();
+    blank.addPage();
+    const bad = await post("mutation($p: String!, $b: ID) { importExternalReport(pdfBase64: $p, branchId: $b) { id } }", { p: Buffer.from(await blank.save()).toString("base64"), b: branchId }, refreshed.accessToken);
+    ok(bad.errors?.[0]?.extensions?.code === "UNSUPPORTED_REPORT", "[worker] an unsupported PDF read by the worker → UNSUPPORTED_REPORT");
+    const r2 = new Redis(url);
+    const jobKeys = await r2.keys(`${config.jobs.prefix}:imports:*`);
+    const dump = (await Promise.all(jobKeys.map(async (k) => ((await r2.type(k)) === "hash" ? JSON.stringify(await r2.hgetall(k)) : "")))).join("\n");
+    ok(jobKeys.length > 0 && !dump.includes(pdfBase64.slice(100, 160)) && !dump.includes(refreshed.accessToken), `[worker] import jobs hold ids, not the PDF or a token (${jobKeys.length} keys checked)`);
+    await r2.quit();
   } finally {
     await worker.close();
     await app.close();
