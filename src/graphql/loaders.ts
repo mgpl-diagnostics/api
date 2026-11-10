@@ -1,4 +1,4 @@
-import type { AccountGroup, Booking, Branch, Customer, Doctor, Invoice, Ledger, Partner, Patient, Repositories, User } from "@mgpl-diagnostics/db-kit";
+import type { AccountGroup, Booking, Branch, Customer, Doctor, Invoice, Ledger, Partner, Patient, ReportProvenance, Repositories, User } from "@mgpl-diagnostics/db-kit";
 
 /**
  * Minimal DataLoader: every load() in the same tick is batched into one getMany(), and results are
@@ -48,6 +48,21 @@ export class BatchLoader<T extends { id: string }> {
   }
 }
 
+/**
+ * Memoised lookup by a key that is not the primary id (one query per distinct key, all in the same tick),
+ * for repositories that only filter by equality.
+ */
+export class KeyLoader<T> {
+  private cache = new Map<string, Promise<T | null>>();
+  constructor(private readonly fetchOne: (key: string) => Promise<T | null>) {}
+  load(key: string | null | undefined): Promise<T | null> {
+    if (!key) return Promise.resolve(null);
+    let p = this.cache.get(key);
+    if (!p) this.cache.set(key, (p = this.fetchOne(key)));
+    return p;
+  }
+}
+
 /** One set per request (created lazily by the context). */
 export function createLoaders(r: Repositories) {
   return {
@@ -61,6 +76,8 @@ export function createLoaders(r: Repositories) {
     customer: new BatchLoader<Customer>((ids) => r.customers.getMany(ids)),
     partner: new BatchLoader<Partner>((ids) => r.partners.getMany(ids)),
     user: new BatchLoader<User>((ids) => r.users.getMany(ids)),
+    /** A report's partner-lab provenance, by report id. */
+    provenance: new KeyLoader<ReportProvenance>((reportId) => r.reportProvenance.findOne({ reportId } as never)),
   };
 }
 

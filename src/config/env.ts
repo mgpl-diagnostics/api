@@ -48,6 +48,8 @@ export interface Config {
   jwt: { secrets: string[]; issuer: string; accessTtlMs: number; generated: boolean };
   /** A refresh from another device: "enforce" ends the session (default), "flag" only audits, "off" ignores. */
   deviceBinding: "enforce" | "flag" | "off";
+  /** Partner-lab PDF imports: largest file accepted, largest extracted in the request (larger go to the worker), how long a request waits for the worker. */
+  imports: { maxBytes: number; inlineMaxBytes: number; waitMs: number };
   /** Background jobs (BullMQ on REDIS_URL): key prefix and how many jobs a worker runs at once. */
   jobs: { prefix: string; concurrency: number; keepResultsMs: number };
   /**
@@ -154,6 +156,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       generated: !secrets.length,
     },
     deviceBinding,
+    imports: { maxBytes: int(env.IMPORT_MAX_BYTES, 15 * 1024 * 1024), inlineMaxBytes: int(env.IMPORT_INLINE_MAX_BYTES, 5 * 1024 * 1024), waitMs: int(env.IMPORT_WAIT_MS, 60_000) },
     jobs: { prefix: env.QUEUE_PREFIX || "mgpl", concurrency: Math.max(1, int(env.WORKER_CONCURRENCY, 4)), keepResultsMs: int(env.JOB_RESULT_TTL_MS, 3600_000) },
     smtp: smtpUrl ? { url: smtpUrl, from: env.MAIL_FROM || "MGPL Diagnostics <no-reply@localhost.localdomain>" } : null,
     mailWebhookUrl: env.MAIL_WEBHOOK_URL || null,

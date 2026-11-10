@@ -22,6 +22,7 @@ flowchart LR
 | Queue | Job | Started by | What the worker does | Retries |
 |---|---|---|---|---|
 | `mail` | `password-reset` | `requestPasswordReset` | creates the single-use token (auth-kit), sends the link through the `Mailer` | 5, exponential from 2 s; a rate-limited request is dropped |
+| `imports` | `extract` · `reextract` | `importExternalReport` (PDFs over `IMPORT_INLINE_MAX_BYTES`), `nameExternalSignature` | reads a stored partner PDF with report-reader; the payload carries the file id and the actor, never the file | UNSUPPORTED_REPORT fails at once |
 | `documents` | `invoice` · `booking_reports` | `startDocumentJob` | renders the stored invoice or the booking's reports (invoice-kit / report-kit) | 2; NOT_FOUND / CONFLICT / BAD_USER_INPUT fail at once |
 
 ```mermaid

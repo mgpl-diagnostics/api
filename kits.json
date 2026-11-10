@@ -14,16 +14,20 @@
       "ref": "v1.0.0"
     },
     {
+      "name": "report-reader",
+      "ref": "v0.1.0"
+    },
+    {
       "name": "auth-kit",
-      "ref": "v1.3.0"
+      "ref": "v1.4.0"
     },
     {
       "name": "db-kit",
-      "ref": "v2.0.0"
+      "ref": "v2.1.1"
     },
     {
       "name": "report-kit",
-      "ref": "v2.0.0"
+      "ref": "v2.1.0"
     },
     {
       "name": "ledger-kit",
@@ -31,7 +35,7 @@
     },
     {
       "name": "client",
-      "ref": "v1.2.0"
+      "ref": "v1.4.0"
     },
     {
       "name": "invoice-kit",
