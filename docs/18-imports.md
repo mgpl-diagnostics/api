@@ -77,6 +77,6 @@ whose single root field is `importExternalReport`**. Every other request keeps `
 
 ## Storage
 
-db-kit 2.1.0 tables (both backends): `external_reports`, `external_report_files` (the PDF, loaded only
+db-kit 2.1.1 tables (both backends): `external_reports`, `external_report_files` (the PDF, loaded only
 when reading it), `external_signatories` (cached per organisation, cleared on write),
 `external_signatures` and `report_provenance`. See db-kit's `docs/EXTERNAL-REPORTS.md`.

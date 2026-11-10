@@ -26,7 +26,7 @@
     "@graphql-tools/schema": "^10.1.5",
     "@mgpl-diagnostics/auth-kit": "^1.4.0",
     "@mgpl-diagnostics/catalog-kit": "^1.0.0",
-    "@mgpl-diagnostics/db-kit": "^2.1.0",
+    "@mgpl-diagnostics/db-kit": "^2.1.1",
     "@mgpl-diagnostics/finance-kit": "^1.0.1",
     "@mgpl-diagnostics/invoice-kit": "^2.0.0",
     "@mgpl-diagnostics/ledger-kit": "^0.1.0",
