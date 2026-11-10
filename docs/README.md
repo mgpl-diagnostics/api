@@ -21,6 +21,7 @@ flowchart TD
   L --> P["17 Scaling"]
   G --> Q["18 Partner-lab imports"]
   L --> R["19 Updates"]
+  R --> V["20 VPS"]
 ```
 
 | # | Page | What it answers |
@@ -44,5 +45,6 @@ flowchart TD
 | 17 | [Scaling](17-scaling.md) | N replicas behind a proxy, PgBouncer, readiness, graceful shutdown, docker-compose |
 | 18 | [Partner-lab imports](18-imports.md) | Reading partner lab PDFs, matching, applying with provenance, NABL and signature rules |
 | 19 | [Releases and updates](19-updates.md) | Docker images on GHCR, hosting with Compose, the update notice, releasing |
+| 20 | [Hosting on a VPS](20-vps.md) | One server with Docker Compose: production .env, first lab, HTTPS, backups, updates |
 | — | [examples/](examples/) | Runnable `.graphql` operations |
 | — | [LOCAL-AGENT-BRIEF.md](LOCAL-AGENT-BRIEF.md) | What a local agent (or a person) must do next, outside this repo |

@@ -26,6 +26,8 @@ Both are built for `linux/amd64` and `linux/arm64`.
 
 ## Hosting with Docker Compose
 
+Step by step on a VPS, with HTTPS, a production `.env` and backups: [20-vps.md](20-vps.md).
+
 [`docker-compose.yml`](../docker-compose.yml) runs everything on one host: PostgreSQL, PgBouncer, Redis,
 `db-sync`, the api replicas, the worker, the dashboard and nginx in front of them on `HTTP_PORT` (8080).
 nginx sends `/graphql` and `/health` to the api and everything else to the dashboard, so the browser sees one
@@ -40,7 +42,7 @@ curl -fsSL -o .env https://raw.githubusercontent.com/mgpl-diagnostics/api/main/.
 docker compose up -d
 ```
 
-Seed the first organisation once ([03-getting-started.md](03-getting-started.md)). Then open `http://your-server:8080` (put TLS in front: a CDN or cloud load balancer, then `TRUST_PROXY=2`, or a
+Seed the first organisation once (`docker compose run --rm db-sync node dist/seed.js`, see [20-vps.md](20-vps.md)). Then open `http://your-server:8080` (put TLS in front: a CDN or cloud load balancer, then `TRUST_PROXY=2`, or a
 `listen 443 ssl` server in `deploy/nginx.conf`). `CORS_ORIGINS` lists the address people open.
 
 To build the api from a checkout instead of pulling it, add the build file:

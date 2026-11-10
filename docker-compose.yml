@@ -1,6 +1,6 @@
 # The whole system on one host: PostgreSQL ← PgBouncer ← N api replicas, the worker, Redis, the dashboard,
 # and nginx in front (/graphql and /health → api, everything else → dashboard). Guides: docs/17-scaling.md,
-# docs/18-updates.md.
+# docs/19-updates.md.
 #
 #   cp .env.example .env                        # set JWT_SECRET, CORS_ORIGINS, POSTGRES_PASSWORD, …
 #   docker compose up -d                         # pulls the released images; http://localhost:8080

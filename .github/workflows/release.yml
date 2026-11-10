@@ -75,5 +75,5 @@ jobs:
             echo "release $TAG exists"
           else
             gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes \
-              --notes "Image: \`ghcr.io/${{ github.repository }}:${{ steps.v.outputs.version }}\` (linux/amd64, linux/arm64). Update guide: docs/18-updates.md"
+              --notes "Image: \`ghcr.io/${{ github.repository }}:${{ steps.v.outputs.version }}\` (linux/amd64, linux/arm64). Update guide: docs/19-updates.md"
           fi
