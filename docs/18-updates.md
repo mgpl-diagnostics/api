@@ -93,8 +93,7 @@ The first time, make each package public once: GitHub → the organisation → P
 Package settings → Change visibility → Public (or keep them private and `docker login ghcr.io` on the server
 with a token that has `read:packages`).
 
-## One-click updates
+## Why there is no "Update now" button
 
-Not built in: the api never gets access to the Docker socket. A watchtower-style updater that pulls new images
-on a schedule or on a token-protected HTTP call could be added next to the compose file; see the open
-question in the PR that introduced this page.
+Updating stays two commands run by a person on the server, on purpose: an updater would need the Docker
+socket (root on the host), and every update should follow a database backup. The dashboard shows what to run.

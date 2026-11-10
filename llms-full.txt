@@ -2308,11 +2308,10 @@ The first time, make each package public once: GitHub → the organisation → P
 Package settings → Change visibility → Public (or keep them private and `docker login ghcr.io` on the server
 with a token that has `read:packages`).
 
-## One-click updates
+## Why there is no "Update now" button
 
-Not built in: the api never gets access to the Docker socket. A watchtower-style updater that pulls new images
-on a schedule or on a token-protected HTTP call could be added next to the compose file; see the open
-question in the PR that introduced this page.
+Updating stays two commands run by a person on the server, on purpose: an updater would need the Docker
+socket (root on the host), and every update should follow a database backup. The dashboard shows what to run.
 
 
 ---
@@ -10410,7 +10409,7 @@ async function updatesSuite(url: string) {
   await s2.close();
 
   const off = await new SystemService(loadConfig({ NODE_ENV: "production", DATABASE_URL: "x", CORS_ORIGINS: "https://a.test", JWT_SECRET: "x".repeat(32), UPDATE_CHECK: "false" }).updates, async () => { throw new Error("no call expected"); }).updates({});
-  ok(off.enabled === false && off.error === null && off.components[0].latest === null, "[updates] UPDATE_CHECK=false: no outbound call");
+  ok(off.enabled === false && off.error === null && off.components[0]?.latest === null, "[updates] UPDATE_CHECK=false: no outbound call");
   ok(loadConfig({ NODE_ENV: "production", DATABASE_URL: "x", CORS_ORIGINS: "https://a.test", JWT_SECRET: "x".repeat(32) }).updates.enabled, "[updates] on by default in production");
   let bad = false;
   try { loadConfig({ NODE_ENV: "test", UPDATE_REPO_API: "../../etc" }); } catch { bad = true; }
