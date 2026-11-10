@@ -628,6 +628,215 @@ type DocumentSample {
   label: String!
 }
 
+enum ExternalLab {
+  clinova
+  hypatho
+}
+
+type ExternalParameter {
+  flag: ResultFlag
+  group: String
+  method: String
+  name: String!
+
+  """
+  As printed (the partner's range for the partner's method; never recomputed).
+  """
+  range: String
+  unit: String
+
+  """As printed."""
+  value: String!
+}
+
+type ExternalPatient {
+  ageText: String
+  ageYears: Int
+  name: String
+  patientId: String
+  sex: Sex
+  title: String
+}
+
+"""
+Who performed a test and who reported it, as it will print under the test.
+"""
+type ExternalProvenanceLabel {
+  """
+  Only when the partner marked this test accredited: the partner's accreditation, not ours.
+  """
+  accreditationText: String
+  performedAt: String
+  performedBy: String!
+
+  """Medical signatories only."""
+  reportedBy: [ExternalReportedBy!]!
+
+  """The whole line."""
+  text: String!
+}
+
+type ExternalReport {
+  appliedAt: DateTime
+  booking: Booking
+  branchId: ID!
+  byteLength: Int!
+  fileName: String
+  id: ID!
+  lab: ExternalLab!
+  labName: String!
+  patient: ExternalPatient!
+
+  """
+  Differences from the booking's patient (name, sex, age ±1). Applying needs confirmPatientMismatch when there are any.
+  """
+  patientMismatches: [String!]!
+  processedAt: String
+  rejectReason: String
+  reportedAt: String
+
+  """Our reports it was applied to."""
+  reports: [Report!]!
+  sampleIds: [String!]!
+  signatories: [ExternalSignatoryOnReport!]!
+
+  """SHA-256 of the PDF."""
+  sourceSha256: String!
+  status: ExternalReportStatus!
+  tests: [ExternalTest!]!
+  uploadedAt: DateTime!
+  uploadedBy: User
+
+  """Reader warnings and booking-check differences."""
+  warnings: [String!]!
+}
+
+type ExternalReportConnection {
+  nodes: [ExternalReport!]!
+  pageInfo: PageInfo!
+}
+
+enum ExternalReportStatus {
+  applied
+  extracted
+  matched
+  rejected
+}
+
+type ExternalReportedBy {
+  id: String!
+  name: String
+  qualification: String
+  registration: String
+  role: ExternalSignatoryRole!
+  title: String
+}
+
+"""
+A partner signatory in the organisation's registry (data entered by staff, never code).
+"""
+type ExternalSignatory {
+  createdAt: DateTime!
+  id: ID!
+  lab: ExternalLab!
+  name: String!
+  qualification: String
+  registration: String
+  role: ExternalSignatoryRole
+
+  """How many signature images are tied to this person."""
+  signatureCount: Int!
+  title: String
+}
+
+input ExternalSignatoryInput {
+  lab: ExternalLab!
+  name: String!
+  qualification: String
+  registration: String
+  role: ExternalSignatoryRole
+
+  """ExternalSignatoryOnReport.sha"""
+  sha: String!
+  title: String
+}
+
+type ExternalSignatoryOnReport {
+  id: String!
+
+  """The signature image from this PDF."""
+  image: SignatureImage
+
+  """Only medical signatories appear in Reported by."""
+  medical: Boolean!
+
+  """Null until someone names this signature (nameExternalSignature)."""
+  name: String
+  pages: [Int!]!
+  qualification: String
+  registration: String
+  role: ExternalSignatoryRole!
+
+  """SHA-256 of the signature image (pass it to nameExternalSignature)."""
+  sha: String!
+  source: ExternalSignatorySource!
+  title: String
+}
+
+enum ExternalSignatoryRole {
+  biochemist
+  consultant
+  manager
+  microbiologist
+  pathologist
+  unknown
+}
+
+"""
+How a signatory on a partner PDF was named: printed beside the signature, from our registry, or not at all.
+"""
+enum ExternalSignatorySource {
+  registry
+  text
+  unknown
+}
+
+type ExternalTest {
+  """True only when the partner marked this test as accredited."""
+  accredited: Boolean!
+  department: String
+
+  """Position in the partner report (use it in ExternalTestMappingInput)."""
+  index: Int!
+  method: String
+  name: String!
+  notes: String
+  parameters: [ExternalParameter!]!
+  provenance: ExternalProvenanceLabel!
+  reported: String
+  sampleId: String
+  sampleType: String
+
+  """Ids of the signatories who signed this test's pages."""
+  signedBy: [String!]!
+
+  """
+  Our catalog test suggested for it (top search hit), for staff to confirm.
+  """
+  suggestedTestCode: String
+}
+
+input ExternalTestMappingInput {
+  """false skips the test."""
+  include: Boolean = true
+
+  """One of the booking's test codes."""
+  testCode: String!
+
+  """ExternalTest.index"""
+  testIndex: Int!
+}
+
 type FinanceConfig {
   b2clThresholdPaise: Int!
   bankMaxFeeBp: Int!
@@ -956,6 +1165,11 @@ type Mutation {
   addAgreement(input: AgreementInput!): PartnerAgreement!
   addTaxRule(input: TaxRuleInput!): TaxRule!
   amendReport(id: ID!): Report!
+
+  """
+  Writes the mapped tests into our reports as entered results with provenance. Staff verify as usual.
+  """
+  applyExternalReport(confirmPatientMismatch: Boolean = false, id: ID!, mappings: [ExternalTestMappingInput!]!): [Report!]!
   cancelBooking(id: ID!): Booking!
   cancelInvoice(id: ID!, reason: String!): Invoice!
   cancelSettlement(id: ID!): Settlement!
@@ -978,6 +1192,12 @@ type Mutation {
   disableUser(userId: ID!): User!
   enableUser(userId: ID!): User!
   importBankStatement(input: BankImportInput!): BankImportResult!
+
+  """
+  Reads a partner lab's PDF (base64, up to IMPORT_MAX_BYTES). The same PDF again returns the same import.
+  branchId defaults to the booking's branch.
+  """
+  importExternalReport(bookingId: ID, branchId: ID, fileName: String, pdfBase64: String!): ExternalReport!
   issueCreditNote(input: CreditNoteInput!): CreditNoteResult!
   issueCustomerInvoice(input: CustomerInvoiceInput!): Invoice!
   issueInvoice(input: IssueInvoiceInput!): Invoice!
@@ -991,6 +1211,14 @@ type Mutation {
   """Ends every other session of the signed-in user; returns how many."""
   logoutOtherSessions: Int!
   matchBankLine(lineId: ID!, voucherIds: [ID!]!): BankLine!
+
+  """Ties an import to a booking; patient differences become warnings."""
+  matchExternalReport(bookingId: ID!, id: ID!): ExternalReport!
+
+  """
+  Names a partner signature; the organisation's unapplied imports that carry it are read again.
+  """
+  nameExternalSignature(input: ExternalSignatoryInput!): ExternalSignatory!
   paySettlement(input: PaySettlementInput!): Settlement!
 
   """Does nothing; lets clients check that mutations reach the server."""
@@ -1009,6 +1237,7 @@ type Mutation {
   refreshSession(device: DeviceInput, refreshToken: String!): LoginResult!
   refundPayment(invoiceId: ID!, payment: PaymentInput!): Invoice!
   registerPatient(input: RegisterPatientInput!): Patient!
+  rejectExternalReport(id: ID!, reason: String!): ExternalReport!
   rejectSample(id: ID!, reason: String!): Sample!
   releaseReport(id: ID!): Report!
 
@@ -1127,6 +1356,11 @@ type OutstandingRow {
   ageDays: Int!
   bucket: AgeBucket!
   invoice: Invoice!
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
 }
 
 enum ParameterType {
@@ -1364,6 +1598,11 @@ type Query {
   exportProfitAndLoss(bom: Boolean = false, branchId: ID, from: DateTime!, to: DateTime!): CsvFile!
   exportSettlement(bom: Boolean = false, settlementId: ID!): CsvFile!
   exportTrialBalance(asOf: DateTime, bom: Boolean = false, branchId: ID): CsvFile!
+  externalReport(id: ID!): ExternalReport
+  externalReports(after: String, bookingId: ID, branchId: ID, first: Int = 50, status: ExternalReportStatus): ExternalReportConnection!
+
+  """The organisation's partner signatory registry."""
+  externalSignatories(lab: ExternalLab): [ExternalSignatory!]!
   financeConfig: FinanceConfig!
   gstSummary(branchId: ID, from: DateTime!, to: DateTime!): GstSummary!
   gstr1(from: DateTime!, gstin: String, to: DateTime!): Gstr1!
@@ -1496,6 +1735,9 @@ type Report {
   booking: Booking!
   id: ID!
   patient: Patient!
+
+  """Set when the results came from a partner lab's report."""
+  provenance: ReportProvenance
   releasedAt: DateTime
   results: [ResultValue!]!
   status: ReportStatus!
@@ -1515,6 +1757,25 @@ type ReportProfile {
   id: String!
   name: String!
   tests: [String!]!
+}
+
+"""
+Where one of our reports came from, when its results were imported from a partner PDF.
+"""
+type ReportProvenance {
+  accreditationText: String
+  appliedAt: DateTime!
+  externalReportId: ID!
+
+  """The results as imported (for comparison when staff edit them)."""
+  importedResults: [ResultValue!]!
+  lab: ExternalLab!
+  performedAt: String
+  performedBy: String!
+  reportedBy: [ExternalReportedBy!]!
+  sourceReportedAt: String
+  sourceSampleId: String
+  sourceTestName: String!
 }
 
 enum ReportStatus {
@@ -1721,6 +1982,16 @@ type ShareRate {
 input ShareRateInput {
   code: String!
   sharePaise: Int!
+}
+
+"""
+A signature image from a partner PDF, PNG base64. Only ever served with that PDF's own results.
+"""
+type SignatureImage {
+  base64: String!
+  height: Int!
+  mimeType: String!
+  width: Int!
 }
 
 type StatementRow {

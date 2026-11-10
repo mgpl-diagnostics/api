@@ -54,6 +54,17 @@ export class ReportService {
   }
 
   async saveResults(actor: Actor, report: Report, results: ResultValue[]) {
+    const imported = await this.repos.reportProvenance.findOne({ reportId: report.id } as never);
+    if (imported) {
+      // results from a partner PDF: keep the partner's units and ranges (no catalog defaults), and audit the edit
+      // against what was imported (ReportProvenance.importedResults keeps the original)
+      const out = await saveResults(this.repos, report.id, results, actor.userId);
+      await this.repos.audit.log({
+        orgId: actor.orgId, branchId: report.branchId, userId: actor.userId, action: "report.edit_imported", entity: "report", entityId: report.id,
+        data: { externalReportId: imported.externalReportId, changed: results.filter((r) => !imported.importedResults.some((x) => x.parameter === r.parameter && x.value === r.value)).map((r) => r.parameter) },
+      });
+      return out;
+    }
     const patient = await this.repos.patients.get(report.patientId);
     return saveResults(this.repos, report.id, withCatalogDefaults(report.testCode, results, patient?.sex ?? "other"), actor.userId);
   }

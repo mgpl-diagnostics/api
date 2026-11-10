@@ -10,6 +10,7 @@ import { CatalogService } from "./catalog.service";
 import { DocumentService } from "./document.service";
 import { ExportService } from "./export.service";
 import { GstService } from "./gst.service";
+import { ImportService, type ImportLimits } from "./import.service";
 import { JobService } from "./job.service";
 import type { JobQueue } from "../jobs/types";
 import { OrganizationService } from "./organization.service";
@@ -28,6 +29,8 @@ export interface ServiceDeps {
   samples: boolean;
   /** The job queue (BullMQ or inline); a getter because the inline queue needs the services first. */
   jobs: () => JobQueue;
+  /** Partner-lab PDF limits (IMPORT_* variables). */
+  imports: ImportLimits;
 }
 
 /** Every service, one instance each. Services know nothing about GraphQL; controllers call them. */
@@ -49,6 +52,7 @@ export function createServices(d: ServiceDeps) {
     exports: new ExportService(d.repos),
     documents: new DocumentService(d.repos, { lab: d.lab, samples: d.samples }),
     jobs: new JobService(d.repos, d.jobs),
+    imports: new ImportService(d.repos, d.jobs, d.imports),
   };
 }
 

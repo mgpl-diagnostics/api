@@ -3,7 +3,7 @@ import type { Actor } from "../graphql/context";
 import type { RenderedDocument, RenderOptions } from "../services/document.service";
 
 /** Queue names (Redis keys are `<QUEUE_PREFIX>:<queue>:…`). */
-export const QUEUES = { mail: "mail", documents: "documents" } as const;
+export const QUEUES = { mail: "mail", documents: "documents", imports: "imports" } as const;
 
 /** mail queue: the worker creates the reset token itself, so no raw token ever sits in Redis. */
 export interface PasswordResetJob {
@@ -22,6 +22,27 @@ export interface DocumentJob {
   bookingId?: Id | null;
   reportIds?: Id[] | null;
   options: RenderOptions;
+}
+
+/**
+ * imports queue · extract: reads a stored partner PDF (report-reader) and creates its external report.
+ * Carries the stored file's id and the actor, never the file or a token.
+ */
+export interface ImportJob {
+  kind: "extract";
+  actor: Actor;
+  fileId: Id;
+  branchId: Id;
+  bookingId?: Id | null;
+  fileName?: string | null;
+}
+
+/** imports queue · reextract: after a partner signature is named, re-reads that organisation's unapplied imports that carry it. */
+export interface ReextractJob {
+  kind: "reextract";
+  actor: Actor;
+  /** the signature's pixel hash */
+  sha: string;
 }
 
 export type JobState = "waiting" | "active" | "completed" | "failed" | "delayed";
@@ -48,6 +69,10 @@ export interface JobQueue {
   passwordReset(job: PasswordResetJob): Promise<void>;
   document(job: DocumentJob): Promise<JobInfo>;
   get(id: string): Promise<JobInfo | null>;
+  /** Extracts a large partner PDF in the worker and waits for it (up to IMPORT_WAIT_MS); resolves with the external report's id. */
+  importReport(job: ImportJob, waitMs: number): Promise<{ externalReportId: Id }>;
+  /** Re-extraction after naming a signature, in the background (inline: at once). */
+  reextract(job: ReextractJob): Promise<void>;
   close(): Promise<void>;
 }
 

@@ -1,4 +1,4 @@
-import { GraphQLError, Kind, type ASTVisitor, type FragmentDefinitionNode, type SelectionSetNode, type ValidationContext } from "graphql";
+import { GraphQLError, Kind, parse, type ASTVisitor, type FragmentDefinitionNode, type SelectionSetNode, type ValidationContext } from "graphql";
 
 /** Rejects queries nested deeper than `max` levels (a cheap guard against abusive queries). */
 export function depthLimit(max: number) {
@@ -28,7 +28,7 @@ export function depthLimit(max: number) {
 }
 
 /** Root fields that render a PDF / HTML document or build a CSV: CPU-heavy, so few per operation. */
-const DOCUMENT_FIELD = /^(bookingReportDocument|invoiceDocument|renderReport|renderInvoice|letterhead|export[A-Z]\w*)$/;
+const DOCUMENT_FIELD = /^(bookingReportDocument|invoiceDocument|renderReport|renderInvoice|letterhead|export[A-Z]\w*|importExternalReport)$/;
 
 /**
  * Rejects operations that select more than `maxFields` fields in all (fragments counted where they are
@@ -71,4 +71,30 @@ export function costLimit(maxFields: number, maxDocuments: number, maxRootFields
       },
     };
   };
+}
+
+/** Root fields that may send a body larger than BODY_LIMIT_BYTES (up to importBodyLimit). */
+const LARGE_BODY_FIELDS = new Set(["importExternalReport"]);
+
+/** Body size that fits a base64 PDF of `maxBytes` plus the rest of the request. */
+export const importBodyLimit = (maxBytes: number) => Math.ceil(maxBytes / 3) * 4 + 64 * 1024;
+
+/**
+ * True when a request body holds one operation whose only root field may be large (importExternalReport).
+ * Other operations keep BODY_LIMIT_BYTES, so the larger limit cannot be used to send oversized queries.
+ */
+export function allowsLargeBody(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const query = (body as { query?: unknown }).query;
+  if (typeof query !== "string" || query.length > 10_000) return false;
+  let doc;
+  try {
+    doc = parse(query, { noLocation: true, maxTokens: 2_000 });
+  } catch {
+    return false;
+  }
+  if (doc.definitions.length !== 1) return false;
+  const op = doc.definitions[0];
+  if (op?.kind !== Kind.OPERATION_DEFINITION || op.operation !== "mutation") return false;
+  return op.selectionSet.selections.length === 1 && op.selectionSet.selections.every((s) => s.kind === Kind.FIELD && LARGE_BODY_FIELDS.has(s.name.value));
 }

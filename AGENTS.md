@@ -21,6 +21,7 @@ src/controllers/       resolvers per module: authorize → map → service
 src/services/          business calls on the kits: (actor, input), ownership checks, no GraphQL
 scripts/               kits.mjs (build kits from source), seed.ts, print-schema.ts, api-reference.ts, llms-full.mjs
 test/run.ts            end-to-end over HTTP on PostgreSQL + MongoDB, plus docs/examples validation
+test/imports.ts        partner-lab imports end to end (fictional PDFs drawn by test/partner-pdfs.ts)
 docs/                  A-to-Z docs (Mermaid), examples/*.graphql, LOCAL-AGENT-BRIEF.md
 schema.graphql         printed schema (generated)
 kits.json              kit refs for `npm run kits` (building unreleased kit branches from source)
@@ -60,7 +61,11 @@ Dockerfile, docker-compose.yml, deploy/   image; PostgreSQL ← PgBouncer ← N 
     users or sessions), and keep the db layer free of session-level PostgreSQL features (named prepared
     statements, `SET` without `LOCAL`, advisory locks held across transactions, `LISTEN`, temp tables):
     PgBouncer runs in transaction mode and `npm test` runs the suite through it.
-15. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
+15. **Partner-lab imports** (docs/18-imports.md): the NABL line only under tests the partner marked
+    accredited, never a logo; a partner signature only with results from its own PDF (looked up by that
+    PDF's sha256), never as ours; Reported by = medical signatories; imports never verify or release.
+    PDFs, extracted JSON and signature PNGs are patient data: never logged, never in jobs, fixtures or repos.
+16. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
 
 ## Commands
 

@@ -4,7 +4,7 @@ import { createYoga, type Plugin } from "graphql-yoga";
 import { API_CSP, fastifySecurity, type RequestSecurity } from "@mgpl-diagnostics/security-kit/server";
 import type { Container } from "./container";
 import { createContext, type RequestContext } from "./graphql/context";
-import { costLimit, depthLimit } from "./graphql/limits";
+import { allowsLargeBody, costLimit, depthLimit, importBodyLimit } from "./graphql/limits";
 import { buildSchema } from "./graphql/schema";
 import { isDraining } from "./lifecycle";
 
@@ -42,7 +42,7 @@ function rules(introspection: boolean): Plugin {
  */
 export async function buildServer(container: Container): Promise<FastifyInstance> {
   const { config } = container;
-  const app = Fastify({ logger: config.env === "production" ? { level: "info" } : config.env === "test" ? false : { level: "warn" }, bodyLimit: config.bodyLimit, trustProxy: (_addr: string, hop: number) => hop < config.trustedHops });
+  const app = Fastify({ logger: config.env === "production" ? { level: "info" } : config.env === "test" ? false : { level: "warn" }, bodyLimit: Math.max(config.bodyLimit, importBodyLimit(config.imports.maxBytes)), trustProxy: (_addr: string, hop: number) => hop < config.trustedHops });
 
   // security-kit: security headers on every response, and request.security = { ip, userAgent, … } with the
   // client IP taken from X-Forwarded-For only through the configured number of proxies (TRUST_PROXY).
@@ -75,6 +75,14 @@ export async function buildServer(container: Container): Promise<FastifyInstance
   app.route({
     url: config.graphqlPath,
     method: ["GET", "POST", "OPTIONS"],
+    // the server-wide limit fits a 15 MB partner PDF (importExternalReport); every other operation keeps BODY_LIMIT_BYTES
+    preHandler: async (req, reply) => {
+      // chunked bodies carry no content-length: measure what was parsed
+      const length = Number(req.headers["content-length"]) || (req.body ? Buffer.byteLength(JSON.stringify(req.body)) : 0);
+      if (length > config.bodyLimit && !allowsLargeBody(req.body)) {
+        return reply.status(413).send({ errors: [{ message: `Request body is larger than ${config.bodyLimit} bytes`, extensions: { code: "FILE_TOO_LARGE", maxBytes: config.bodyLimit } }] });
+      }
+    },
     handler: async (req, reply) => {
       const response = await yoga.handleNodeRequestAndResponse(req, reply, { req, reply });
       response.headers.forEach((value, key) => void reply.header(key, value));

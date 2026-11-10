@@ -3,6 +3,7 @@ import { ConflictError, NotFoundError, PeriodLockedError, ValidationError } from
 import { CreditLimitError } from "@mgpl-diagnostics/finance-kit";
 import { HttpError } from "@mgpl-diagnostics/report-kit";
 import { GraphQLError } from "graphql";
+import { BookingPatientMismatchError, FileTooLargeError, ReportAlreadyAppliedError, UnsupportedReportError } from "../services/import.service";
 import { ForbiddenError } from "../services/util";
 
 /**
@@ -15,6 +16,8 @@ export const ERROR_CODES = [
   // auth-kit's own codes, passed through
   "INVALID_CREDENTIALS", "ACCOUNT_DISABLED", "INVITE_PENDING", "ORG_REQUIRED", "RATE_LIMITED", "WEAK_PASSWORD", "INVALID_TOKEN",
   "ORG_UNAVAILABLE",
+  // partner-lab imports (docs/18-imports.md)
+  "UNSUPPORTED_REPORT", "REPORT_ALREADY_APPLIED", "BOOKING_PATIENT_MISMATCH", "FILE_TOO_LARGE",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -39,6 +42,10 @@ export function toGraphQLError(e: unknown): unknown {
     return apiError(e.code as ErrorCode, e.message, e.statusCode, extra);
   }
   if (e instanceof ForbiddenError) return apiError("FORBIDDEN", e.message, 403);
+  if (e instanceof UnsupportedReportError) return apiError("UNSUPPORTED_REPORT", e.message, 422);
+  if (e instanceof FileTooLargeError) return apiError("FILE_TOO_LARGE", e.message, 413, { maxBytes: e.maxBytes });
+  if (e instanceof ReportAlreadyAppliedError) return apiError("REPORT_ALREADY_APPLIED", e.message, 409);
+  if (e instanceof BookingPatientMismatchError) return apiError("BOOKING_PATIENT_MISMATCH", e.message, 409, { mismatches: e.mismatches });
   if (e instanceof PeriodLockedError) return apiError("PERIOD_LOCKED", e.message, 409);
   if (e instanceof CreditLimitError) return apiError("CREDIT_LIMIT_EXCEEDED", e.message, 409);
   if (e instanceof NotFoundError) return apiError("NOT_FOUND", e.message, 404);
