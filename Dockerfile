@@ -15,6 +15,8 @@ RUN --mount=type=secret,id=npm_token \
     && rm /root/.npmrc
 COPY tsconfig.json tsup.config.ts ./
 COPY src ./src
+# tsup also bundles the seed (dist/seed.js: `docker compose run … db-sync node dist/seed.js`)
+COPY scripts/seed.ts ./scripts/seed.ts
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim
