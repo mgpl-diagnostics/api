@@ -26,7 +26,8 @@ Every error in a response carries `extensions.code`. Clients switch on the code,
 | `INVALID_CREDENTIALS` | 401 | Wrong email, organisation or password (same answer for each) | "Email or password is wrong" |
 | `ACCOUNT_DISABLED` | 403 | The user is disabled | Contact an administrator |
 | `INVITE_PENDING` | 403 | The user has not set a password yet | Use the reset link |
-| `ORG_REQUIRED` | 400 | The email exists in more than one organisation | Ask for the organisation code |
+| `ORG_REQUIRED` | 400 | The email and password match accounts in more than one lab. `extensions.organizations` lists them (`code`, `name`) | Show the list; log in again with the picked `orgCode` |
+| `ORG_UNAVAILABLE` | 403 | `switchOrganization` to the current lab, an unknown code, or a lab without an active account for this person | Refresh `myOrganizations` |
 | `RATE_LIMITED` | 429 | Too many attempts; `extensions.retryAfterMs` says how long to wait | Wait, then retry |
 | `WEAK_PASSWORD` | 400 | The new password fails the policy | Show the message |
 | `INVALID_TOKEN` | 400 | A reset token is unknown, used or expired | Request a new link |

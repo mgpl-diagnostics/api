@@ -1267,6 +1267,13 @@ type Mutation {
   Renders a stored invoice or a booking's reports in the background; poll job(id) until completed or failed.
   """
   startDocumentJob(input: DocumentJobInput!): Job!
+
+  """
+  Moves this session to the signed-in person's account in another lab (same email, active there), without
+  the password. This session ends; use the returned tokens. Send the same device as at login, or the
+  session ends (INVALID_TOKEN). ORG_UNAVAILABLE when there is no such account, or it is the current lab.
+  """
+  switchOrganization(device: DeviceInput, orgCode: String!): LoginResult!
   updateBranch(id: ID!, input: BranchPatch!): Branch!
   updateCustomer(id: ID!, input: CustomerPatch!): Customer!
   updateDoctor(id: ID!, input: DoctorPatch!): Doctor!
@@ -1315,6 +1322,19 @@ type Organization {
   legalName: String
   name: String!
   phone: String
+}
+
+"""
+A lab the signed-in person can work in: they have an active account there with the same email.
+Also listed in ORG_REQUIRED errors (extensions.organizations, without current) after a password matched.
+"""
+type OrganizationChoice {
+  """The lab code: pass it to login (orgCode) or switchOrganization."""
+  code: String!
+
+  """The lab of this session."""
+  current: Boolean!
+  name: String!
 }
 
 input OrganizationInput {
@@ -1607,6 +1627,11 @@ type Query {
   ledgers: [Ledger!]!
   letterhead(format: DocumentFormat = pdf): Document!
   lockDates: [PeriodLock!]!
+
+  """
+  Every lab the signed-in person can switch to (same email, active account), the current one included.
+  """
+  myOrganizations: [OrganizationChoice!]!
   mySessions: [Session!]!
   organization: Organization!
   outstandingReceivables(asOf: DateTime, branchId: ID): Outstanding!

@@ -1,4 +1,4 @@
-import { can, permissionMatches, PERMISSIONS, roleMap, SYSTEM_ROLES, type Auth, type DeviceSignals, type PublicUser } from "@mgpl-diagnostics/auth-kit";
+import { AuthError, can, permissionMatches, PERMISSIONS, roleMap, SYSTEM_ROLES, type Auth, type DeviceSignals, type PublicUser } from "@mgpl-diagnostics/auth-kit";
 import { ConflictError, createUser, NotFoundError, ValidationError, type Id, type Repositories, type Role, type RoleAssignment, type User } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
 import type { JobQueue } from "../jobs/types";
@@ -23,6 +23,20 @@ export class AuthService {
 
   login(input: { email: string; password: string; orgCode?: string | null; ip?: string; userAgent?: string; device?: DeviceSignals; tlsFingerprint?: string }) {
     return this.auth.login({ ...input, orgCode: input.orgCode ?? undefined });
+  }
+
+  /** The labs the person can switch to (same email, active account), the current one marked. */
+  async organizations(actor: Actor): Promise<{ code: string; name: string; current: boolean }[]> {
+    return (await this.auth.organizationsOf(actor.userId)).map((o) => ({ code: o.code, name: o.name, current: o.orgId === actor.orgId }));
+  }
+
+  /** Moves the session to the person's account in the lab with this code (auth-kit checks it is theirs). */
+  async switchOrganization(input: { token: string; orgCode: string; ip?: string; userAgent?: string; device?: DeviceSignals; tlsFingerprint?: string }) {
+    const org = await this.repos.orgs.findOne({ code: input.orgCode.trim().toUpperCase() });
+    // an unknown code gets the same answer as a lab without an account, so codes cannot be probed
+    if (!org) throw new AuthError("ORG_UNAVAILABLE", "You can't switch to that organisation");
+    const { orgCode: _c, ...rest } = input;
+    return this.auth.switchOrganization({ ...rest, orgId: org.id });
   }
 
   /** Spends a refresh token: a new access token and the next refresh token (rotation). */

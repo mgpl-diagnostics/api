@@ -77,9 +77,23 @@ export const authTypeDefs = /* GraphQL */ `
     expiresAt: DateTime! @deprecated(reason: "Use accessExpiresAt.")
   }
 
+  """
+  A lab the signed-in person can work in: they have an active account there with the same email.
+  Also listed in ORG_REQUIRED errors (extensions.organizations, without current) after a password matched.
+  """
+  type OrganizationChoice {
+    "The lab code: pass it to login (orgCode) or switchOrganization."
+    code: String!
+    name: String!
+    "The lab of this session."
+    current: Boolean!
+  }
+
   extend type Query {
     "null when not signed in."
     viewer: Viewer
+    "Every lab the signed-in person can switch to (same email, active account), the current one included."
+    myOrganizations: [OrganizationChoice!]!
     mySessions: [Session!]!
     users: [User!]!
     user(id: ID!): User
@@ -101,6 +115,12 @@ export const authTypeDefs = /* GraphQL */ `
     INVALID_TOKEN when it is unknown, spent or expired: sign in again.
     """
     refreshSession(refreshToken: String!, device: DeviceInput): LoginResult!
+    """
+    Moves this session to the signed-in person's account in another lab (same email, active there), without
+    the password. This session ends; use the returned tokens. Send the same device as at login, or the
+    session ends (INVALID_TOKEN). ORG_UNAVAILABLE when there is no such account, or it is the current lab.
+    """
+    switchOrganization(orgCode: String!, device: DeviceInput): LoginResult!
     "Ends this session: the bearer token (even an expired access token), or the refresh token when given."
     logout(refreshToken: String): Boolean!
     "Ends every other session of the signed-in user; returns how many."

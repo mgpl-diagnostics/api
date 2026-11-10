@@ -90,6 +90,17 @@ value a client sent. A missing or malformed fingerprint is never an error. A cha
 session, whatever `DEVICE_BINDING` says: browser updates and TLS-inspecting networks change it too. It is
 not in the GraphQL schema; clients send nothing new.
 
+### One person, several labs
+
+The same email can have an account in several labs (one user each). When the email and password match more
+than one, `login` fails with `ORG_REQUIRED` and `extensions.organizations` (`[{ code, name }]`, only the labs
+whose account matched): show them and log in again with the picked `orgCode`. Once signed in,
+`myOrganizations` lists every lab the person can work in (`current` marks this session's), and
+`switchOrganization(orgCode, device)` moves the session there without the password. The old session ends,
+the same device rule as `refreshSession` applies, and auth-kit audits the switch in both labs
+(`auth.org_switch_out`, `auth.org_switch`). The lab code is a name, not an id: an unknown code and a lab
+without an account both answer `ORG_UNAVAILABLE`.
+
 ### Password reset
 
 `requestPasswordReset(email, orgCode?)` always returns `true`, whether or not the account exists, and
