@@ -33,7 +33,9 @@ NODE_ENV=production node dist/main.js     # API
 NODE_ENV=production node dist/worker.js   # worker (with REDIS_URL)
 ```
 
-A container image: the [`Dockerfile`](../Dockerfile) (Node 22 slim, `dist/`, production `node_modules/`;
+Released images: `ghcr.io/mgpl-diagnostics/api` and `ghcr.io/mgpl-diagnostics/dashboard`, one tag per
+release; owners and admins see new releases in the dashboard ([19-updates.md](19-updates.md)).
+The image is built from the [`Dockerfile`](../Dockerfile) (Node 22 slim, `dist/`, production `node_modules/`;
 `node dist/main.js`, `node dist/worker.js` or `node dist/sync.js`; port 4000). It needs `NODE_AUTH_TOKEN` as a
 build secret for the kits. The PDF engine needs no system fonts (fonts are bundled), but
 report-kit's resvg is a native module: build the image on the same platform it runs on.

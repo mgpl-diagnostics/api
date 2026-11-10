@@ -346,6 +346,35 @@ enum CollectionType {
   walk_in
 }
 
+"""
+One part of the installation: the version that runs, the newest release, and the releases in between.
+"""
+type ComponentUpdate {
+  """
+  Releases newer than current, newest first (at most 20); the newest release alone when current is unknown.
+  """
+  changes: [Release!]!
+
+  """api or dashboard"""
+  component: String!
+
+  """
+  The version that runs; null for the dashboard when it did not say (dashboardVersion).
+  """
+  current: String
+
+  """
+  Docker image, e.g. ghcr.io/mgpl-diagnostics/api (tags: 1.2.3, 1.2, 1, latest).
+  """
+  image: String!
+
+  """
+  The newest published release; null before the first check or when the check is off.
+  """
+  latest: String
+  updateAvailable: Boolean!
+}
+
 input CreateBookingInput {
   branchId: ID!
   collectionType: CollectionType = walk_in
@@ -1674,6 +1703,12 @@ type Query {
   """Computes a month's settlement without saving it. period: YYYY-MM."""
   settlementPreview(deductions: [SettlementDeductionInput!], partnerId: ID!, period: String!): SettlementPreview!
   settlements(branchId: ID, limit: Int = 50, offset: Int = 0, partnerId: ID, status: SettlementStatus): [Settlement!]!
+
+  """
+  Owner and admin (settings:manage): is a newer api or dashboard release out, what changed, and how to
+  update. The dashboard passes its own version; refresh skips the cache (at most once a minute).
+  """
+  systemUpdates(dashboardVersion: String, refresh: Boolean): SystemUpdates!
   taxRules: [TaxRule!]!
   trialBalance(asOf: DateTime, branchId: ID): TrialBalance!
   user(id: ID!): User
@@ -1729,6 +1764,17 @@ input RegisterPatientInput {
   phone: String
   sex: Sex!
   title: String
+}
+
+"""
+A published release of the api or the dashboard (its GitHub release). notes is the changelog, in Markdown.
+"""
+type Release {
+  name: String
+  notes: String
+  publishedAt: DateTime
+  url: String
+  version: String!
 }
 
 type Report {
@@ -2002,6 +2048,31 @@ type StatementRow {
   invoiceId: ID
   voucherNo: String!
   voucherType: VoucherType!
+}
+
+type SystemUpdates {
+  """
+  When the releases were last read (each server checks every UPDATE_CHECK_INTERVAL_MS, 6 hours by default).
+  """
+  checkedAt: DateTime
+  components: [ComponentUpdate!]!
+
+  """The update guide."""
+  docsUrl: String!
+
+  """
+  false when the server has UPDATE_CHECK=false (no outbound calls); versions then show current only.
+  """
+  enabled: Boolean!
+
+  """
+  Why the last check failed (the releases shown are then the last known).
+  """
+  error: String
+
+  """How to update a Docker Compose installation, one step per line."""
+  steps: [String!]!
+  updateAvailable: Boolean!
 }
 
 type TaxRule {

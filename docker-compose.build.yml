@@ -1,0 +1,19 @@
+# Build the api image from this checkout instead of pulling the released one:
+#   NODE_AUTH_TOKEN=… docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# The kits come from GitHub Packages (a token with read:packages, passed as a build secret).
+services:
+  db-sync:
+    image: mgpl-api:local
+    build:
+      context: .
+      secrets: [npm_token]
+  api:
+    image: mgpl-api:local
+    pull_policy: never
+  worker:
+    image: mgpl-api:local
+    pull_policy: never
+
+secrets:
+  npm_token:
+    environment: NODE_AUTH_TOKEN

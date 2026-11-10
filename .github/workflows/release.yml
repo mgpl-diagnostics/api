@@ -1,0 +1,79 @@
+name: Release
+
+# A `v*` tag (admin-only) or a manual run on main publishes one release:
+#   1. checks that the tag equals package.json's version,
+#   2. builds the Docker image for linux/amd64 and linux/arm64 and pushes it to GHCR:
+#      ghcr.io/mgpl-diagnostics/api:<version>, :<major>.<minor>, :<major> and :latest,
+#   3. creates the GitHub release with generated notes (the changelog the dashboard shows owners and admins).
+# Bump the version in a PR first; then `git tag v1.2.3 && git push origin v1.2.3`, or run this workflow on main.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Version from package.json (must match the tag)
+        id: v
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" != "tag" ] && [ "$GITHUB_REF_NAME" != "main" ]; then
+            echo "::error::run this workflow on main or push a v* tag"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ steps.v.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ steps.v.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ steps.v.outputs.version }},enable=${{ !startsWith(steps.v.outputs.version, '0.') }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=MGPL Diagnostics API
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+      # the kits come from GitHub Packages: the workflow token reads them (build secret, never a build arg)
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          secrets: npm_token=${{ secrets.GITHUB_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: GitHub release with generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.v.outputs.version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists"
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes \
+              --notes "Image: \`ghcr.io/${{ github.repository }}:${{ steps.v.outputs.version }}\` (linux/amd64, linux/arm64). Update guide: docs/18-updates.md"
+          fi

@@ -10,6 +10,7 @@ import { financeController } from "../controllers/finance.controller";
 import { importsController } from "../controllers/imports.controller";
 import { labController } from "../controllers/lab.controller";
 import { organizationController } from "../controllers/organization.controller";
+import { systemController } from "../controllers/system.controller";
 import { authTypeDefs } from "../schema/auth.graphql";
 import { baseTypeDefs } from "../schema/base.graphql";
 import { billingTypeDefs } from "../schema/billing.graphql";
@@ -20,6 +21,7 @@ import { financeTypeDefs } from "../schema/finance.graphql";
 import { importsTypeDefs } from "../schema/imports.graphql";
 import { labTypeDefs } from "../schema/lab.graphql";
 import { organizationTypeDefs } from "../schema/organization.graphql";
+import { systemTypeDefs } from "../schema/system.graphql";
 
 /** One domain = one SDL file in src/schema + one controller in src/controllers. */
 export interface GraphQLModule {
@@ -39,6 +41,7 @@ export const MODULES: GraphQLModule[] = [
   { name: "finance", typeDefs: financeTypeDefs, resolvers: financeController },
   { name: "documents", typeDefs: documentsTypeDefs, resolvers: documentsController },
   { name: "imports", typeDefs: importsTypeDefs, resolvers: importsController },
+  { name: "system", typeDefs: systemTypeDefs, resolvers: systemController },
 ];
 
 /** The whole API as one executable schema. */

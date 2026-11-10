@@ -26,6 +26,7 @@ import { brandFromLab, mailerFromConfig, mailKitMailer } from "../src/jobs";
 import { importSuite } from "./imports";
 import { clinovaPdf } from "./partner-pdfs";
 import { PDFDocument } from "pdf-lib";
+import { SystemService } from "../src/services/system.service";
 
 let passed = 0;
 let failed = 0;
@@ -357,9 +358,70 @@ async function fromConfig(url: string) {
     ok((await c.auth.sessionsOf(l.data?.login.user.id)).find((x) => x.id === sid)?.tlsFingerprintHash === undefined, "[config] without TLS_FINGERPRINT_HEADER a client's x-ja4 header is ignored");
     await s.close();
   }
+  await updatesSuite(url);
   let refused = "";
   try { loadConfig({ NODE_ENV: "test", TLS_FINGERPRINT_HEADER: "x-ja4" }); } catch (e) { refused = (e as Error).message; }
   ok(/TRUST_PROXY/.test(refused), "[config] TLS_FINGERPRINT_HEADER without TRUST_PROXY is refused (the header would be spoofable)");
+}
+
+/** systemUpdates: versions from GitHub releases (stubbed), cache, changelog between versions, permissions, failures. */
+async function updatesSuite(url: string) {
+  const pw = "Lab-Owner-2026!";
+  const release = (tag: string, extra: Record<string, unknown> = {}) => ({ tag_name: tag, name: `Release ${tag}`, body: `Changes in ${tag}`, html_url: `https://github.com/x/releases/${tag}`, published_at: "2026-11-01T10:00:00Z", draft: false, prerelease: false, ...extra });
+  const feeds: Record<string, unknown> = {
+    "mgpl-diagnostics/api": [release("v0.0.1"), release("v99.0.0"), release("v100.0.0-rc.1", { prerelease: true }), release("v101.0.0", { draft: true }), release("not-a-version"), release("v98.1.0", { html_url: "javascript:alert(1)" })],
+    "mgpl-diagnostics/dashboard": [release("v0.2.0"), release("v0.3.0"), release("v0.1.0")],
+  };
+  let calls = 0;
+  let status = 200;
+  const stub: typeof fetch = async (input, init) => {
+    calls++;
+    const u = new URL(String(input));
+    const repo = u.pathname.replace(/^\/repos\//, "").replace(/\/releases$/, "");
+    ok(!(init?.headers as Record<string, string>)?.authorization, "[updates] no Authorization header to the feed without UPDATE_GITHUB_TOKEN");
+    return new Response(status === 200 ? JSON.stringify(feeds[repo] ?? []) : "{}", { status, headers: { "content-type": "application/json" } });
+  };
+  const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, UPDATE_CHECK: "1" }), fetch: stub });
+  const s = await buildServer(c);
+  const post = async (query: string, token?: string, variables?: Record<string, unknown>) =>
+    (await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, payload: JSON.stringify({ query, variables }) })).json() as Gql;
+  const login = async (email: string, password: string) => (await post("mutation($i: LoginInput!) { login(input: $i) { accessToken } }", undefined, { i: { email, password } })).data?.login.accessToken as string;
+  const owner = await login("owner@apl.test", pw);
+  const Q = "query($v: String, $r: Boolean) { systemUpdates(dashboardVersion: $v, refresh: $r) { enabled error updateAvailable steps docsUrl checkedAt components { component current latest updateAvailable image changes { version notes url } } } }";
+  const r = (await post(Q, owner, { v: "0.1.0" })).data?.systemUpdates;
+  const api = r?.components.find((x: any) => x.component === "api");
+  const dash = r?.components.find((x: any) => x.component === "dashboard");
+  const { VERSION } = await import("../src/version");
+  ok(r?.enabled && r.updateAvailable && !r.error && api?.current === VERSION && api.latest === "99.0.0" && api.image === "ghcr.io/mgpl-diagnostics/api", `[updates] api ${VERSION} → 99.0.0 (pre-releases, drafts and non-semver tags ignored)`);
+  ok(api?.changes.map((x: any) => x.version).join() === "99.0.0,98.1.0" && api.changes[1].url === null, "[updates] changelog lists only the releases in between, newest first; a non-https link is dropped");
+  ok(dash?.current === "0.1.0" && dash.latest === "0.3.0" && dash.updateAvailable && dash.changes.map((x: any) => x.version).join() === "0.3.0,0.2.0" && dash.changes[0].notes === "Changes in v0.3.0", "[updates] dashboard 0.1.0 → 0.3.0 with both changelogs");
+  ok(r?.steps.some((x: string) => x.includes("MGPL_API_VERSION=99.0.0") && x.includes("MGPL_DASHBOARD_VERSION=0.3.0")) && r.steps.includes("docker compose pull"), "[updates] update steps name the target versions");
+  const before = calls;
+  await post(Q, owner, { v: "0.3.0" });
+  await post(Q, owner, { v: "0.3.0", r: true });
+  ok(calls === before, "[updates] cached: no second call to the feed within the interval, and refresh waits a minute");
+  const odd = (await post(Q, owner, { v: "<script>" })).data?.systemUpdates.components.find((x: any) => x.component === "dashboard");
+  ok(odd?.current === null && odd.updateAvailable === false && odd.changes.length === 1, "[updates] an unknown dashboard version is ignored (no notice, newest release shown)");
+  ok(code(await post(Q)) === "UNAUTHENTICATED", "[updates] signed out → UNAUTHENTICATED");
+  const branchId = (await post("{ branches { id } }", owner)).data?.branches[0].id;
+  await post("mutation($i: CreateUserInput!) { createUser(input: $i) { id } }", owner, { i: { name: "Desk Upd", email: "desk-updates@apl.test", password: "Counter-Shift-7391", roles: [{ role: "front_desk", branchId }] } });
+  ok(code(await post(Q, await login("desk-updates@apl.test", "Counter-Shift-7391"))) === "FORBIDDEN", "[updates] front desk → FORBIDDEN (settings:manage: owner and admin)");
+  await s.close();
+
+  status = 403;
+  const c2 = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, UPDATE_CHECK: "1" }), fetch: stub });
+  const s2 = await buildServer(c2);
+  const t2 = (await s2.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json" }, payload: JSON.stringify({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken } }' }) })).json() as Gql;
+  const failed = ((await s2.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", authorization: `Bearer ${t2.data?.login.accessToken}` }, payload: JSON.stringify({ query: Q }) })).json() as Gql).data?.systemUpdates;
+  ok(/rate limit/.test(failed?.error ?? "") && failed.updateAvailable === false && failed.components[0].current === VERSION, "[updates] feed refuses (403) → error says so, current versions still shown");
+  await s2.close();
+
+  const off = await new SystemService(loadConfig({ NODE_ENV: "production", DATABASE_URL: "x", CORS_ORIGINS: "https://a.test", JWT_SECRET: "x".repeat(32), UPDATE_CHECK: "false" }).updates, async () => { throw new Error("no call expected"); }).updates({});
+  ok(off.enabled === false && off.error === null && off.components[0]?.latest === null, "[updates] UPDATE_CHECK=false: no outbound call");
+  ok(loadConfig({ NODE_ENV: "production", DATABASE_URL: "x", CORS_ORIGINS: "https://a.test", JWT_SECRET: "x".repeat(32) }).updates.enabled, "[updates] on by default in production");
+  let bad = false;
+  try { loadConfig({ NODE_ENV: "test", UPDATE_REPO_API: "../../etc" }); } catch { bad = true; }
+  ok(bad, "[updates] UPDATE_REPO_API must be owner/name");
 }
 
 /** @mgpl-diagnostics/client's session manager against this server: device signals, auto refresh, single flight, logout. */

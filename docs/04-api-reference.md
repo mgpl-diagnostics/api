@@ -207,3 +207,9 @@ and runnable examples are in [examples/](examples/).
 | mutation | `matchExternalReport(id: ID!, bookingId: ID!): ExternalReport!` | `report:import` | Ties an import to a booking; patient differences become warnings. |
 | mutation | `nameExternalSignature(input: ExternalSignatoryInput!): ExternalSignatory!` | `signatory:manage` | Names a partner signature; the organisation's unapplied imports that carry it are read again. |
 | mutation | `rejectExternalReport(id: ID!, reason: String!): ExternalReport!` | `report:import` |  |
+
+## system
+
+| Kind | Operation | Permission | Notes |
+|---|---|---|---|
+| query | `systemUpdates(dashboardVersion: String, refresh: Boolean): SystemUpdates!` | `settings:manage` | Owner and admin (settings:manage): is a newer api or dashboard release out, what changed, and how to update. The dashboard passes its own version; refresh skips the cache (at most once a minute). |

@@ -18,6 +18,8 @@ export interface ContainerOptions {
   jobs?: JobQueue;
   /** Lab branding and signatures for documents. Default: report-kit's defaultLab() (MGPL_SIGNATURE_* files). */
   lab?: LabProfile;
+  /** The HTTP client the update check uses (tests). Default: global fetch. */
+  fetch?: typeof fetch;
 }
 
 /** The composition root: one database, one auth, one set of services, shared by every request. */
@@ -83,7 +85,7 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
     (config.redisUrl
       ? createBullJobQueue({ redisUrl: config.redisUrl, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs })
       : createInlineJobQueue(() => jobDeps!, { keepResultsMs: config.jobs.keepResultsMs }));
-  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs, imports: config.imports });
+  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs, imports: config.imports, updates: config.updates, fetch: o.fetch });
   jobDeps = { repos: db.repos, auth, services };
   return {
     config,

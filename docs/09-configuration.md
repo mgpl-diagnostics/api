@@ -51,8 +51,15 @@ variables already set in the real environment win over the file.
 | `MGPL_SIGNATURE_FILE` | — | One file for both |
 | `SHUTDOWN_DRAIN_MS` | `5000` in production, `0` otherwise | On SIGTERM, `GET /health` answers 503 this long while requests are still served ([17-scaling.md](17-scaling.md#graceful-shutdown)) |
 | `SHUTDOWN_TIMEOUT_MS` | `30000` | Exit anyway this long after the signal (API and worker) |
+| `UPDATE_CHECK` | `true` (`false` in tests) | Update notices for owners and admins: read the newest GitHub releases ([19-updates.md](19-updates.md)); `false` makes no outbound call |
+| `UPDATE_CHECK_INTERVAL_MS` | `21600000` (6 h) | How long one check is reused (at least 60000) |
+| `UPDATE_GITHUB_TOKEN` | empty | Optional token (no scopes) for GitHub's higher rate limit |
+| `UPDATE_REPO_API` / `UPDATE_REPO_DASHBOARD` | `mgpl-diagnostics/api` / `mgpl-diagnostics/dashboard` | Where the releases are read |
+| `UPDATE_FEED_URL` | `https://api.github.com` | The releases API (GitHub Enterprise or a mirror) |
+| `IMAGE_REGISTRY` | `ghcr.io` | Registry shown in the image names |
 
-`docker-compose.yml` reads a few more from `.env` (not the API): `API_REPLICAS`, `HTTP_PORT`,
+`docker-compose.yml` reads a few more from `.env` (not the API): `MGPL_API_VERSION`, `MGPL_DASHBOARD_VERSION`
+(image tags, default `latest`), `MGPL_API_IMAGE`, `MGPL_DASHBOARD_IMAGE`, `API_REPLICAS`, `HTTP_PORT`,
 `POSTGRES_PASSWORD`, `POSTGRES_MAX_CONNECTIONS` and the `PGBOUNCER_*` pool settings
 ([17-scaling.md](17-scaling.md#docker-compose)).
 

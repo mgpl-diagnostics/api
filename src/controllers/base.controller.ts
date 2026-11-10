@@ -1,14 +1,6 @@
-import { readFileSync } from "node:fs";
 import type { RequestContext } from "../graphql/context";
 import { Day, DateTime, JSONScalar } from "../graphql/scalars";
-
-const VERSION = (() => {
-  try {
-    return (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
-  } catch {
-    return "0.0.0";
-  }
-})();
+import { VERSION } from "../version";
 
 export const baseController = {
   DateTime,
