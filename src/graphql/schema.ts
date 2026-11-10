@@ -7,6 +7,7 @@ import { booksController } from "../controllers/books.controller";
 import { catalogController } from "../controllers/catalog.controller";
 import { documentsController } from "../controllers/documents.controller";
 import { financeController } from "../controllers/finance.controller";
+import { importsController } from "../controllers/imports.controller";
 import { labController } from "../controllers/lab.controller";
 import { organizationController } from "../controllers/organization.controller";
 import { systemController } from "../controllers/system.controller";
@@ -17,6 +18,7 @@ import { booksTypeDefs } from "../schema/books.graphql";
 import { catalogTypeDefs } from "../schema/catalog.graphql";
 import { documentsTypeDefs } from "../schema/documents.graphql";
 import { financeTypeDefs } from "../schema/finance.graphql";
+import { importsTypeDefs } from "../schema/imports.graphql";
 import { labTypeDefs } from "../schema/lab.graphql";
 import { organizationTypeDefs } from "../schema/organization.graphql";
 import { systemTypeDefs } from "../schema/system.graphql";
@@ -38,6 +40,7 @@ export const MODULES: GraphQLModule[] = [
   { name: "books", typeDefs: booksTypeDefs, resolvers: booksController },
   { name: "finance", typeDefs: financeTypeDefs, resolvers: financeController },
   { name: "documents", typeDefs: documentsTypeDefs, resolvers: documentsController },
+  { name: "imports", typeDefs: importsTypeDefs, resolvers: importsController },
   { name: "system", typeDefs: systemTypeDefs, resolvers: systemController },
 ];
 

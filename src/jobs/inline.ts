@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { processDocument, processPasswordReset, type JobDeps } from "./processors";
+import { processDocument, processImport, processPasswordReset, processReextract, type JobDeps } from "./processors";
 import { JobFailure, type DocumentJob, type JobInfo, type JobQueue, type PasswordResetJob } from "./types";
 
 /**
@@ -30,6 +30,12 @@ export function createInlineJobQueue(deps: () => JobDeps, o: { keepResultsMs: nu
       }
       info.finishedAt = new Date();
       return info;
+    },
+    async importReport(job) {
+      return processImport(deps(), job);
+    },
+    async reextract(job) {
+      await processReextract(deps(), job);
     },
     async get(id: string) {
       prune();

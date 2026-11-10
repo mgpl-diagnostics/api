@@ -19,6 +19,7 @@ and runnable examples are in [examples/](examples/).
 
 | Kind | Operation | Permission | Notes |
 |---|---|---|---|
+| query | `myOrganizations: [OrganizationChoice!]!` | (signed in) | Every lab the signed-in person can switch to (same email, active account), the current one included. |
 | query | `mySessions: [Session!]!` | (signed in) |  |
 | query | `permissions: [String!]!` | (signed in) | Every permission name the API checks. |
 | query | `roles: [Role!]!` | `role:read` |  |
@@ -38,6 +39,7 @@ and runnable examples are in [examples/](examples/).
 | mutation | `revokeSession(id: ID!): Boolean!` | (signed in) |  |
 | mutation | `setUserPassword(userId: ID!, newPassword: String!): Boolean!` | `user:update` |  |
 | mutation | `setUserRoles(userId: ID!, roles: [RoleAssignmentInput!]!): User!` | `user:update` |  |
+| mutation | `switchOrganization(orgCode: String!, device: DeviceInput): LoginResult!` | public | Moves this session to the signed-in person's account in another lab (same email, active there), without the password. This session ends; use the returned tokens. Send the same device as at login, or the session ends (INVALID_TOKEN). ORG_UNAVAILABLE when there is no such account, or it is the current lab. |
 | mutation | `upsertRole(input: RoleInput!): Role!` | `role:manage` |  |
 
 ## organization
@@ -192,6 +194,19 @@ and runnable examples are in [examples/](examples/).
 | query | `renderReport(request: JSON!, format: DocumentFormat, variant: ReportVariant, design: ReportDesign, fileName: String): Document!` | `report:read` | Any report: request = report-kit's ReportRequest JSON (patient + tests \| profile \| report \| sample). |
 | query | `reportTemplates: TemplateCatalog!` | (signed in) |  |
 | mutation | `startDocumentJob(input: DocumentJobInput!): Job!` | `invoice:read`, `report:read` | Renders a stored invoice or a booking's reports in the background; poll job(id) until completed or failed. |
+
+## imports
+
+| Kind | Operation | Permission | Notes |
+|---|---|---|---|
+| query | `externalReport(id: ID!): ExternalReport` | `report:import` |  |
+| query | `externalReports(branchId: ID, bookingId: ID, status: ExternalReportStatus, first: Int, after: String): ExternalReportConnection!` | `report:import` |  |
+| query | `externalSignatories(lab: ExternalLab): [ExternalSignatory!]!` | `signatory:read` | The organisation's partner signatory registry. |
+| mutation | `applyExternalReport(id: ID!, mappings: [ExternalTestMappingInput!]!, confirmPatientMismatch: Boolean): [Report!]!` | `report:enter`, `report:import` | Writes the mapped tests into our reports as entered results with provenance. Staff verify as usual. |
+| mutation | `importExternalReport(pdfBase64: String!, fileName: String, bookingId: ID, branchId: ID): ExternalReport!` | `report:import` | Reads a partner lab's PDF (base64, up to IMPORT_MAX_BYTES). The same PDF again returns the same import. branchId defaults to the booking's branch. |
+| mutation | `matchExternalReport(id: ID!, bookingId: ID!): ExternalReport!` | `report:import` | Ties an import to a booking; patient differences become warnings. |
+| mutation | `nameExternalSignature(input: ExternalSignatoryInput!): ExternalSignatory!` | `signatory:manage` | Names a partner signature; the organisation's unapplied imports that carry it are read again. |
+| mutation | `rejectExternalReport(id: ID!, reason: String!): ExternalReport!` | `report:import` |  |
 
 ## system
 

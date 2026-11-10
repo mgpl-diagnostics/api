@@ -19,10 +19,15 @@ Every error in a response carries `extensions.code`. Clients switch on the code,
 | `CONFLICT` | 409 | Duplicate key, or the wrong state (e.g. release before verify, cancel a paid invoice) | Refresh and show the message |
 | `PERIOD_LOCKED` | 409 | A posting date is on or before a lock date | Ask an accountant; pick another date |
 | `CREDIT_LIMIT_EXCEEDED` | 409 | A B2B invoice would exceed the customer's credit limit | Collect payment or raise the limit |
+| `UNSUPPORTED_REPORT` | 422 | `importExternalReport`: the PDF is not from a supported partner lab | Tell the user; enter results by hand |
+| `FILE_TOO_LARGE` | 413 | A partner PDF over `IMPORT_MAX_BYTES`, or any other request over `BODY_LIMIT_BYTES` (`extensions.maxBytes`) | Ask for a smaller file |
+| `BOOKING_PATIENT_MISMATCH` | 409 | `applyExternalReport`: the booking's patient differs (`extensions.mismatches`) | Show the differences; resend with `confirmPatientMismatch: true` if staff confirm |
+| `REPORT_ALREADY_APPLIED` | 409 | The partner report was already applied | Open the reports it created |
 | `INVALID_CREDENTIALS` | 401 | Wrong email, organisation or password (same answer for each) | "Email or password is wrong" |
 | `ACCOUNT_DISABLED` | 403 | The user is disabled | Contact an administrator |
 | `INVITE_PENDING` | 403 | The user has not set a password yet | Use the reset link |
-| `ORG_REQUIRED` | 400 | The email exists in more than one organisation | Ask for the organisation code |
+| `ORG_REQUIRED` | 400 | The email and password match accounts in more than one lab. `extensions.organizations` lists them (`code`, `name`) | Show the list; log in again with the picked `orgCode` |
+| `ORG_UNAVAILABLE` | 403 | `switchOrganization` to the current lab, an unknown code, or a lab without an active account for this person | Refresh `myOrganizations` |
 | `RATE_LIMITED` | 429 | Too many attempts; `extensions.retryAfterMs` says how long to wait | Wait, then retry |
 | `WEAK_PASSWORD` | 400 | The new password fails the policy | Show the message |
 | `INVALID_TOKEN` | 400 | A reset token is unknown, used or expired | Request a new link |
@@ -38,6 +43,7 @@ flowchart LR
   W -->|AuthError| A["code = AuthError.code"]
   W -->|PeriodLockedError| L["PERIOD_LOCKED"]
   W -->|CreditLimitError| CL["CREDIT_LIMIT_EXCEEDED"]
+  W -->|import errors| IM["UNSUPPORTED_REPORT / FILE_TOO_LARGE /<br/>BOOKING_PATIENT_MISMATCH / REPORT_ALREADY_APPLIED"]
   W -->|NotFound / Conflict / ValidationError| D["NOT_FOUND / CONFLICT / BAD_USER_INPUT"]
   W -->|report-kit HttpError 400| B["BAD_USER_INPUT"]
   W -->|anything else| M["re-thrown → Yoga masks it<br/>'Unexpected error'"]

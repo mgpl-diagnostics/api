@@ -9,9 +9,10 @@ import {
 } from "@mgpl-diagnostics/invoice-kit";
 import {
   buildReport, COLS_STD, defaultLab, renderLetterheadHtml, renderLetterheadPdf, renderReportHtml, renderReportPdf, reportFromRequest, SAMPLES, templateCatalog, TEMPLATES,
-  type LabProfile, type Patient as PrintPatient, type Report as PrintReport, type ReportDesign, type ReportRequest, type ReportVariant, type Section, type TestRow,
+  type LabProfile, type Patient as PrintPatient, type Report as PrintReport, type ReportDesign, type ReportRequest, type ReportTestProvenance, type ReportVariant, type Section, type TestRow,
 } from "@mgpl-diagnostics/report-kit";
 import type { Actor } from "../graphql/context";
+import { printedProvenance } from "./import.service";
 import { mustOwn } from "./util";
 
 export type DocumentFormat = "pdf" | "html";
@@ -160,8 +161,44 @@ export class DocumentService {
     const printed = printPatient(patient, reportedAt, {
       refDoctor: doctor?.name ?? "Self", sampleId: booking.bookingNo, sampleCollectionDate: collected, collectedAt: collected, registeredAt: booking.createdAt, reportedAt,
     });
-    const report: PrintReport = { patient: printed, sections: reports.flatMap((r) => this.sections(r, printed)) };
+    const sections: Section[] = [];
+    for (const r of reports) {
+      const own = this.sections(r, printed);
+      const provenance = await this.provenanceOf(actor.orgId, r);
+      // the line prints under the report's last section (report-kit wraps and paginates it)
+      if (provenance && own.length) own[own.length - 1] = { ...own[own.length - 1]!, provenance };
+      sections.push(...own);
+    }
+    const report: PrintReport = { patient: printed, sections };
     return this.renderReport(report, { ...o, fileName: o.fileName ?? `${booking.bookingNo}-${o.variant}.${o.format}` });
+  }
+
+  /**
+   * The printed provenance of a report imported from a partner PDF. Partner signatures are looked up by
+   * (organisation, the sha256 of the PDF these results came from, image sha): a stored signature is never
+   * printed with results from another PDF, and never as our own signatory.
+   */
+  private async provenanceOf(orgId: Id, r: DbReport): Promise<ReportTestProvenance | null> {
+    const p = await this.repos.reportProvenance.findOne({ reportId: r.id } as never);
+    if (!p || p.orgId !== orgId) return null;
+    const ext = await this.repos.externalReports.get(p.externalReportId);
+    const signatories = ext && ext.orgId === orgId && ext.sourceSha256 === p.sourceSha256
+      ? ((ext.extracted as { signatories?: { id: string; signature?: { sha?: string } }[] }).signatories ?? [])
+      : [];
+    const reportedBy = [];
+    for (const s of p.reportedBy) {
+      if (!s.name) continue;
+      const sha = signatories.find((x) => x.id === s.signatoryId)?.signature?.sha;
+      const img = sha ? await this.repos.externalSignatures.findOne({ orgId, sourceSha256: p.sourceSha256, sha } as never) : null;
+      reportedBy.push({
+        name: s.name,
+        ...(s.qualification ? { qualification: s.qualification } : {}),
+        ...(s.registration ? { registration: s.registration } : {}),
+        ...(s.title ? { title: s.title } : {}),
+        ...(img ? { signatureSrc: `data:image/png;base64,${Buffer.from(img.png).toString("base64")}` } : {}),
+      });
+    }
+    return { ...printedProvenance(p), ...(reportedBy.length ? { reportedBy } : {}) };
   }
 
   private sections(r: DbReport, patient: PrintPatient): Section[] {

@@ -122,7 +122,7 @@ Stopping one replica of three under constant traffic through nginx gave 40 of 40
 ## Docker Compose
 
 [`docker-compose.yml`](../docker-compose.yml) runs the whole system on one host from the released images
-([18-updates.md](18-updates.md)): PostgreSQL, PgBouncer (transaction mode), Redis (AOF on), a one-shot
+([19-updates.md](19-updates.md)): PostgreSQL, PgBouncer (transaction mode), Redis (AOF on), a one-shot
 `db-sync`, `API_REPLICAS` API containers, a worker, the dashboard and nginx
 ([`deploy/nginx.conf`](../deploy/nginx.conf)) in front on `HTTP_PORT` (`/graphql` and `/health` → the
 replicas, everything else → the dashboard).

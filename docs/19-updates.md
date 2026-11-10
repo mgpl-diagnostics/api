@@ -1,4 +1,4 @@
-# 18 · Releases, Docker images and updates
+# 19 · Releases, Docker images and updates
 
 Every release of the api and of the dashboard publishes a Docker image, and owners and admins see in the
 dashboard when a newer one is out: which version runs, which is the newest, what changed in between, and

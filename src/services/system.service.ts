@@ -54,7 +54,7 @@ export function toReleases(json: unknown): Release[] {
     .sort((a, b) => compareVersions(b.version, a.version));
 }
 
-const DOCS_URL = "https://github.com/mgpl-diagnostics/api/blob/main/docs/18-updates.md";
+const DOCS_URL = "https://github.com/mgpl-diagnostics/api/blob/main/docs/19-updates.md";
 const MIN_REFRESH_MS = 60_000;
 
 export class SystemService {

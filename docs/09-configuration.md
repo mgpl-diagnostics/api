@@ -26,7 +26,10 @@ variables already set in the real environment win over the file.
 | `CORS_ORIGINS` | `*` in development, empty in production | Comma-separated origins. `*` is refused in production |
 | `GRAPHIQL` | on in development | GraphiQL at the endpoint (GET) |
 | `INTROSPECTION` | on in development | Off adds `NoSchemaIntrospectionCustomRule` |
-| `BODY_LIMIT_BYTES` | `2000000` | Request body limit (bank CSV imports count) |
+| `BODY_LIMIT_BYTES` | `2000000` | Request body limit (bank CSV imports count). `importExternalReport` alone may send up to a base64 `IMPORT_MAX_BYTES` |
+| `IMPORT_MAX_BYTES` | `15728640` (15 MiB) | Largest partner-lab PDF ([18](18-imports.md)) |
+| `IMPORT_INLINE_MAX_BYTES` | `5242880` (5 MiB) | Larger partner PDFs are read by the worker when Redis is configured |
+| `IMPORT_WAIT_MS` | `60000` | How long `importExternalReport` waits for the worker |
 | `TRUST_PROXY` | `false` | How many proxies in front of the API append to `X-Forwarded-For`: `true` = 1 (a load balancer), `2` for CDN + load balancer. Login limits and sessions then see the client IP; entries left of the trusted proxies (which any client can send) are ignored |
 | `TLS_FINGERPRINT_HEADER` | empty (off) | Header the TLS-terminating proxy sets to the client's JA4 (or JA3) TLS fingerprint, e.g. `x-ja4`. Read only through `TRUST_PROXY` proxies (refused at startup without one); stored hashed on the session, a change audited ([06-auth-and-permissions.md](06-auth-and-permissions.md#tls-fingerprint)) |
 | `MGPL_SAMPLES` | on in development | Demo report/invoice samples in `documents` |
@@ -48,7 +51,7 @@ variables already set in the real environment win over the file.
 | `MGPL_SIGNATURE_FILE` | — | One file for both |
 | `SHUTDOWN_DRAIN_MS` | `5000` in production, `0` otherwise | On SIGTERM, `GET /health` answers 503 this long while requests are still served ([17-scaling.md](17-scaling.md#graceful-shutdown)) |
 | `SHUTDOWN_TIMEOUT_MS` | `30000` | Exit anyway this long after the signal (API and worker) |
-| `UPDATE_CHECK` | `true` (`false` in tests) | Update notices for owners and admins: read the newest GitHub releases ([18-updates.md](18-updates.md)); `false` makes no outbound call |
+| `UPDATE_CHECK` | `true` (`false` in tests) | Update notices for owners and admins: read the newest GitHub releases ([19-updates.md](19-updates.md)); `false` makes no outbound call |
 | `UPDATE_CHECK_INTERVAL_MS` | `21600000` (6 h) | How long one check is reused (at least 60000) |
 | `UPDATE_GITHUB_TOKEN` | empty | Optional token (no scopes) for GitHub's higher rate limit |
 | `UPDATE_REPO_API` / `UPDATE_REPO_DASHBOARD` | `mgpl-diagnostics/api` / `mgpl-diagnostics/dashboard` | Where the releases are read |
