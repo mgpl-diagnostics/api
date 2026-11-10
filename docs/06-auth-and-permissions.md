@@ -68,8 +68,9 @@ device binding, rotation and revocation work the same).
 | `logout` | ends the session of the refresh cookie and clears both cookies (always answers true) | ends the bearer's session, or `logout(refreshToken)` |
 | SDK | `createSessionManager({ cookies: true })` (client 1.7+) | the default |
 
-The cookies are `__Host-mgpl_access` (until the access token expires) and `__Host-mgpl_refresh` (until the
-refresh token's idle or maximum age), both `HttpOnly; Secure; SameSite=Strict; Path=/`. `__Host-` means the
+The cookies are `__Host-mgpl_access` and `__Host-mgpl_refresh`, both kept until the refresh token's idle or
+maximum age (the JWT in the access cookie still expires after 15 minutes; the cookie outliving it means a
+clock difference can't make the browser drop it early), both `HttpOnly; Secure; SameSite=Strict; Path=/`. `__Host-` means the
 browser refuses them without `Secure`, with a `Domain` or on another path, so no subdomain can set or
 shadow them. No script on the page can read them, so an XSS bug cannot copy a token, not even by calling
 `refreshSession`: a cookie session's tokens never appear in an answer. A request with a bearer token

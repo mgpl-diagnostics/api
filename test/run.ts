@@ -296,6 +296,8 @@ async function suite(db: Db, tag: string) {
   const cLogin = (await browser('mutation($d: DeviceInput) { login(input: { email: "two@labs.test", password: "Lab-Owner-2026!", orgCode: "APL", device: $d }) { accessToken refreshToken token accessExpiresAt refreshExpiresAt user { email } } }', { d: cDev })).data?.login;
   ok(cLogin?.user.email === "two@labs.test" && cLogin.accessToken === null && cLogin.refreshToken === null && cLogin.token === null && !!cLogin.accessExpiresAt && !!cLogin.refreshExpiresAt, `[${tag}] cookie login: no token in the body, expiry times only`);
   ok(lastSetCookie.length === 2 && lastSetCookie.every((c) => /^__Host-mgpl_(access|refresh)=[A-Za-z0-9._-]{20,}; Path=\/; Max-Age=\d+; HttpOnly; SameSite=Strict; Secure$/.test(c)), `[${tag}] cookie login sets __Host- access and refresh cookies: HttpOnly, Secure, SameSite=Strict, Path=/`);
+  const ages = lastSetCookie.map((c) => Number(/Max-Age=(\d+)/.exec(c)?.[1]));
+  ok(ages[0] === ages[1] && ages[0]! > 3600, `[${tag}] the access cookie lives as long as the refresh cookie (the JWT inside still expires in 15 minutes)`);
   ok((await browser("{ organization { code } }")).data?.organization.code === "APL", `[${tag}] the access cookie authenticates (x-mgpl-auth: cookie)`);
   ok(code(await browser("{ organization { code } }", undefined, { header: false })) === "UNAUTHENTICATED", `[${tag}] CSRF: cookies without the x-mgpl-auth header are ignored`);
   ok((await browser("{ organization { code } }", undefined, { origin: "https://lab.test" })).data?.organization.code === "APL", `[${tag}] cookies from this host's own origin work`);

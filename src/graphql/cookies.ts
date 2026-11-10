@@ -97,7 +97,10 @@ export function authCookies(cfg: CookieConfig, corsOrigins: readonly string[], h
     refresh: jar.get(names.refresh) || null,
     set(pair) {
       const now = Date.now();
-      setCookie(serializeCookie(names.access, pair.accessToken, { ...opts, maxAgeMs: pair.accessExpiresAt.getTime() - now }));
+      // the access cookie lives as long as the refresh cookie: the JWT inside still expires after 15 minutes
+      // (UNAUTHENTICATED → the client refreshes), but the browser never drops it early because of a clock
+      // difference, which would turn requests anonymous instead of failing them
+      setCookie(serializeCookie(names.access, pair.accessToken, { ...opts, maxAgeMs: pair.refreshExpiresAt.getTime() - now }));
       setCookie(serializeCookie(names.refresh, pair.refreshToken, { ...opts, maxAgeMs: pair.refreshExpiresAt.getTime() - now }));
     },
     clear() {
