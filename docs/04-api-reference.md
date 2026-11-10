@@ -31,15 +31,15 @@ and runnable examples are in [examples/](examples/).
 | mutation | `disableUser(userId: ID!): User!` | `user:disable` |  |
 | mutation | `enableUser(userId: ID!): User!` | `user:disable` |  |
 | mutation | `login(input: LoginInput!): LoginResult!` | public |  |
-| mutation | `logout(refreshToken: String): Boolean!` | public | Ends this session: the bearer token (even an expired access token), or the refresh token when given. |
+| mutation | `logout(refreshToken: String): Boolean!` | public | Ends this session: the refresh token when given, else the bearer token (even an expired access token), else the session cookies (which are cleared). |
 | mutation | `logoutOtherSessions: Int!` | (signed in) | Ends every other session of the signed-in user; returns how many. |
-| mutation | `refreshSession(refreshToken: String!, device: DeviceInput): LoginResult!` | public | Spends a refresh token and returns a new access token and the next refresh token. A refresh token used twice ends its session (it was copied); within a few seconds (two tabs) the second use only fails. Send the same device as at login: a refresh from another device id ends the session (DEVICE_BINDING). INVALID_TOKEN when it is unknown, spent or expired: sign in again. |
+| mutation | `refreshSession(refreshToken: String, device: DeviceInput): LoginResult!` | public | Spends a refresh token and returns a new access token and the next refresh token: the one given, or for a cookie session (no argument) the refresh cookie, and the new tokens are set as cookies. A refresh token used twice ends its session (it was copied); within a few seconds (two tabs) the second use only fails. Send the same device as at login: a refresh from another device id ends the session (DEVICE_BINDING). INVALID_TOKEN when it is unknown, spent or expired: sign in again. |
 | mutation | `requestPasswordReset(email: String!, orgCode: String): Boolean!` | public | Always true (never reveals whether the email exists). Queued: the worker creates the single-use token and mails the link. |
 | mutation | `resetPassword(token: String!, newPassword: String!): Boolean!` | public |  |
 | mutation | `revokeSession(id: ID!): Boolean!` | (signed in) |  |
 | mutation | `setUserPassword(userId: ID!, newPassword: String!): Boolean!` | `user:update` |  |
 | mutation | `setUserRoles(userId: ID!, roles: [RoleAssignmentInput!]!): User!` | `user:update` |  |
-| mutation | `switchOrganization(orgCode: String!, device: DeviceInput): LoginResult!` | public | Moves this session to the signed-in person's account in another lab (same email, active there), without the password. This session ends; use the returned tokens. Send the same device as at login, or the session ends (INVALID_TOKEN). ORG_UNAVAILABLE when there is no such account, or it is the current lab. |
+| mutation | `switchOrganization(orgCode: String!, device: DeviceInput): LoginResult!` | public | Moves this session to the signed-in person's account in another lab (same email, active there), without the password. This session ends; use the returned tokens (a cookie session gets them as cookies). Send the same device as at login, or the session ends (INVALID_TOKEN). ORG_UNAVAILABLE when there is no such account, or it is the current lab. |
 | mutation | `upsertRole(input: RoleInput!): Role!` | `role:manage` |  |
 
 ## organization

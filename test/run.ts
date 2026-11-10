@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { hashPassword, hashTlsFingerprint, SYSTEM_ROLES } from "@mgpl-diagnostics/auth-kit";
 import { createDb, seedOrganization, type Db, type Repositories } from "@mgpl-diagnostics/db-kit";
 import { financePosting, istDay } from "@mgpl-diagnostics/finance-kit";
-import { createMgplGraphQLClient, OPERATIONS } from "@mgpl-diagnostics/client";
+import { createMgplGraphQLClient, createSessionManager, OPERATIONS } from "@mgpl-diagnostics/client";
 import { parse, validate } from "graphql";
 import { Redis } from "ioredis";
 import { QueryTypes, Sequelize } from "sequelize";
@@ -271,6 +271,49 @@ async function suite(db: Db, tag: string) {
   ok(code(await gql(null, 'mutation { switchOrganization(orgCode: "APL") { accessToken } }')) === "UNAUTHENTICATED", `[${tag}] switchOrganization needs a session`);
   ok(code(await gql(moved.accessToken, 'mutation { switchOrganization(orgCode: "APL", device: { deviceId: "dev-elsewhere-0009" }) { accessToken } }')) === "INVALID_TOKEN" && code(await gql(moved.accessToken, "{ organization { code } }")) === "UNAUTHENTICATED", `[${tag}] switch from another device → INVALID_TOKEN and the session ends`);
 
+  // ---------------------------------------------------------------- browser sessions in httpOnly cookies (src/graphql/cookies.ts)
+  const jar = new Map<string, string>();
+  let lastSetCookie: string[] = [];
+  const browser = async (query: string, variables?: Record<string, unknown>, o: { header?: boolean; origin?: string; cookies?: Map<string, string> } = {}) => {
+    const cookie = [...(o.cookies ?? jar)].map(([k, v]) => `${k}=${v}`).join("; ");
+    const res = await app.inject({
+      method: "POST",
+      url: "/graphql",
+      headers: { "content-type": "application/json", host: "lab.test", ...(o.header === false ? {} : { "x-mgpl-auth": "cookie" }), ...(o.origin ? { origin: o.origin } : {}), ...(cookie ? { cookie } : {}) },
+      payload: JSON.stringify({ query, variables }),
+    });
+    const set = res.headers["set-cookie"];
+    lastSetCookie = set === undefined ? [] : Array.isArray(set) ? set : [set];
+    if (!o.cookies) for (const c of lastSetCookie) {
+      const [pair] = c.split(";");
+      const [k, v] = [pair!.slice(0, pair!.indexOf("=")), pair!.slice(pair!.indexOf("=") + 1)];
+      if (/Max-Age=0/.test(c)) jar.delete(k);
+      else jar.set(k, v);
+    }
+    return res.json() as Gql;
+  };
+  const cDev = { deviceId: "dev-cookie-browser-01" };
+  const cLogin = (await browser('mutation($d: DeviceInput) { login(input: { email: "two@labs.test", password: "Lab-Owner-2026!", orgCode: "APL", device: $d }) { accessToken refreshToken token accessExpiresAt refreshExpiresAt user { email } } }', { d: cDev })).data?.login;
+  ok(cLogin?.user.email === "two@labs.test" && cLogin.accessToken === null && cLogin.refreshToken === null && cLogin.token === null && !!cLogin.accessExpiresAt && !!cLogin.refreshExpiresAt, `[${tag}] cookie login: no token in the body, expiry times only`);
+  ok(lastSetCookie.length === 2 && lastSetCookie.every((c) => /^__Host-mgpl_(access|refresh)=[A-Za-z0-9._-]{20,}; Path=\/; Max-Age=\d+; HttpOnly; SameSite=Strict; Secure$/.test(c)), `[${tag}] cookie login sets __Host- access and refresh cookies: HttpOnly, Secure, SameSite=Strict, Path=/`);
+  ok((await browser("{ organization { code } }")).data?.organization.code === "APL", `[${tag}] the access cookie authenticates (x-mgpl-auth: cookie)`);
+  ok(code(await browser("{ organization { code } }", undefined, { header: false })) === "UNAUTHENTICATED", `[${tag}] CSRF: cookies without the x-mgpl-auth header are ignored`);
+  ok((await browser("{ organization { code } }", undefined, { origin: "https://lab.test" })).data?.organization.code === "APL", `[${tag}] cookies from this host's own origin work`);
+  const cookieRefresh = jar.get("__Host-mgpl_refresh")!;
+  const cRef = (await browser("mutation($d: DeviceInput) { refreshSession(device: $d) { accessToken refreshToken user { email } } }", { d: cDev })).data?.refreshSession;
+  ok(cRef?.user.email === "two@labs.test" && cRef.accessToken === null && cRef.refreshToken === null && lastSetCookie.length === 2 && jar.get("__Host-mgpl_refresh") !== cookieRefresh, `[${tag}] cookie refresh (no argument): new cookies, still no token in the body`);
+  ok(code(await browser("mutation { refreshSession { accessToken } }", undefined, { header: false })) === "INVALID_TOKEN", `[${tag}] CSRF: refresh without the header does not read the cookie`);
+  ok(code(await browser("mutation { refreshSession { accessToken } }", undefined, { cookies: new Map([["__Host-mgpl_refresh", cookieRefresh]]) })) === "INVALID_TOKEN" && lastSetCookie.length === 0, `[${tag}] a spent refresh cookie → INVALID_TOKEN, and no Set-Cookie (a racing refresh's new cookies stay)`);
+  ok((await browser("{ organization { code } }")).data?.organization.code === "APL", `[${tag}] the current cookies still work after a stale tab's refresh (grace window)`);
+  const cSwitch = (await browser('mutation($d: DeviceInput) { switchOrganization(orgCode: "OTH", device: $d) { accessToken refreshToken user { email } } }', { d: cDev })).data?.switchOrganization;
+  ok(cSwitch?.accessToken === null && cSwitch.refreshToken === null && lastSetCookie.length === 2 && (await browser("{ organization { code } }")).data?.organization.code === "OTH", `[${tag}] cookie lab switch: the new session comes as cookies and works in the other lab`);
+  const beforeLogout = new Map(jar);
+  ok((await browser("mutation { logout }")).data?.logout === true && lastSetCookie.length === 2 && lastSetCookie.every((c) => /Max-Age=0/.test(c)) && jar.size === 0, `[${tag}] cookie logout clears both cookies`);
+  ok(code(await browser("{ organization { code } }", undefined, { cookies: beforeLogout })) === "UNAUTHENTICATED" && code(await browser("mutation { refreshSession { accessToken } }", undefined, { cookies: beforeLogout })) === "INVALID_TOKEN", `[${tag}] after logout the old cookies are dead on the server too`);
+  ok((await browser("mutation { logout }")).data?.logout === true, `[${tag}] cookie logout without cookies is idempotent`);
+  const mixed = (await browser('mutation { login(input: { email: "x@oth.test", password: "Lab-Owner-2026!" }) { accessToken } }', undefined, { header: false })).data?.login;
+  ok(typeof mixed?.accessToken === "string" && lastSetCookie.length === 0, `[${tag}] without x-mgpl-auth, login returns bearer tokens and sets no cookie`);
+
   // ---------------------------------------------------------------- background documents (in-process queue here; BullMQ in [worker])
   const otherAgain = await login("x@oth.test");
   const owner2 = await login("owner@apl.test");
@@ -312,8 +355,31 @@ async function fromConfig(url: string) {
   const org = await post({ query: "{ organization { code } }" }, login.data?.login.accessToken);
   ok(org.data?.organization.code === "APL", "[config] createContainer from env: own db-kit + auth-kit (memory sessions), login works");
   await clientSdk(app);
+  await clientCookies(app);
   const pre = await app.inject({ method: "OPTIONS", url: "/graphql", headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" } });
   ok(pre.statusCode < 300 && pre.headers["access-control-allow-origin"] !== undefined, "[config] CORS preflight answered");
+  ok(pre.headers["access-control-allow-credentials"] === "true" && String(pre.headers["access-control-allow-headers"]).split(", ").includes("x-mgpl-auth"), "[config] CORS allows credentials and the x-mgpl-auth header");
+  {
+    const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, CORS_ORIGINS: "https://lab.example.in" }) });
+    const s = await buildServer(c);
+    const allowed = await s.inject({ method: "OPTIONS", url: "/graphql", headers: { origin: "https://lab.example.in", "access-control-request-method": "POST", "access-control-request-headers": "content-type,x-mgpl-auth" } });
+    const login = await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", host: "api.example.in", origin: "https://lab.example.in", "x-mgpl-auth": "cookie" }, payload: JSON.stringify({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken } }' }) });
+    const evil = await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", host: "api.example.in", origin: "https://evil.test", "x-mgpl-auth": "cookie" }, payload: JSON.stringify({ query: 'mutation { login(input: { email: "owner@apl.test", password: "Lab-Owner-2026!" }) { accessToken } }' }) });
+    ok(allowed.headers["access-control-allow-origin"] === "https://lab.example.in" && allowed.headers["access-control-allow-credentials"] === "true", "[config] CORS_ORIGINS (VPS): the listed origin may send credentials");
+    ok([login.headers["set-cookie"]].flat().length === 2 && (login.json() as Gql).data?.login.accessToken === null, "[config] a listed origin on another host gets cookie sessions");
+    ok(evil.headers["set-cookie"] === undefined && typeof (evil.json() as Gql).data?.login.accessToken === "string" && evil.headers["access-control-allow-origin"] !== "https://evil.test", "[config] an unlisted origin gets no cookies (and no CORS header, so its page cannot read the answer)");
+    const t = (login.json() as Gql, [login.headers["set-cookie"]].flat().map((c) => String(c).split(";")[0]).join("; "));
+    const q = (origin: string) => s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", host: "api.example.in", origin, "x-mgpl-auth": "cookie", cookie: t }, payload: JSON.stringify({ query: "{ organization { code } }" }) });
+    ok(((await q("https://lab.example.in")).json() as Gql).data?.organization.code === "APL" && code((await q("https://evil.test")).json() as Gql) === "UNAUTHENTICATED", "[config] CSRF: the cookies work from the listed origin and are ignored from any other, header or not");
+    await s.close();
+  }
+  {
+    const throws = (env: Record<string, string>) => { try { loadConfig(env); return false; } catch { return true; } };
+    const prod = { NODE_ENV: "production", DATABASE_URL: "x", CORS_ORIGINS: "https://a.test", JWT_SECRET: "x".repeat(32) };
+    ok(throws({ ...prod, AUTH_COOKIE_SECURE: "false" }) && throws({ NODE_ENV: "test", AUTH_COOKIE_SECURE: "false", AUTH_COOKIE_SAMESITE: "none" }) && throws({ NODE_ENV: "test", AUTH_COOKIE_SAMESITE: "loose" }), "[config] cookies: Secure in production, SameSite=None needs Secure, SameSite is checked");
+    const dev = loadConfig({ NODE_ENV: "test", AUTH_COOKIE_SECURE: "false", AUTH_COOKIE_SAMESITE: "lax" }).authCookies;
+    ok(dev.secure === false && dev.sameSite === "Lax" && loadConfig(prod).authCookies.secure && loadConfig(prod).authCookies.sameSite === "Strict" && !loadConfig({ NODE_ENV: "test", AUTH_COOKIES: "false" }).authCookies.enabled, "[config] cookie defaults: on, Secure, SameSite=Strict");
+  }
   const res = await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json" }, payload: JSON.stringify({ query: "{ health { ok } }" }) });
   ok(res.headers["x-content-type-options"] === "nosniff" && res.headers["x-frame-options"] === "DENY" && res.headers["referrer-policy"] === "no-referrer", "[config] security-kit headers on GraphQL responses");
   ok((await app.inject({ url: "/health" })).headers["x-content-type-options"] === "nosniff", "[config] security-kit headers on /health");
@@ -453,6 +519,53 @@ async function clientSdk(app: Awaited<ReturnType<typeof buildServer>>) {
   const refreshToken = client.session.current()!.refreshToken!;
   await client.auth.logout();
   ok(client.session.getSnapshot().status === "signed_out" && signedOut.length === 1 && code((await app.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json" }, payload: JSON.stringify({ query: "mutation($r: String!) { refreshSession(refreshToken: $r) { accessToken } }", variables: { r: refreshToken } }) })).json() as Gql) === "INVALID_TOKEN", "[client] logout ends the server session and notifies subscribers");
+}
+
+/**
+ * The SDK in cookie mode (client 1.7+), as the dashboard runs it: a browser-like cookie jar, no token in
+ * JavaScript or in the storage, auto refresh, lab switch and logout. Skipped on an older client.
+ */
+async function clientCookies(app: Awaited<ReturnType<typeof buildServer>>) {
+  if (!("cookies" in createSessionManager({ device: false }))) {
+    console.log("  (skipped: the installed @mgpl-diagnostics/client has no cookie mode yet; needs 1.7.0)");
+    return;
+  }
+  const jar = new Map<string, string>();
+  let refreshes = 0;
+  const browserFetch: typeof fetch = async (_url, init) => {
+    const body = String(init?.body ?? "");
+    if (body.includes("refreshSession")) refreshes++;
+    const headers: Record<string, string> = { ...Object.fromEntries(new Headers(init?.headers).entries()), host: "api.test" };
+    // like a browser: cookies travel only with credentials
+    if (init?.credentials === "include" && jar.size) headers.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+    const res = await app.inject({ method: "POST", url: "/graphql", headers, payload: body });
+    for (const c of [res.headers["set-cookie"] ?? []].flat()) {
+      const [pair] = String(c).split(";");
+      const name = pair!.slice(0, pair!.indexOf("="));
+      if (/Max-Age=0/.test(String(c))) jar.delete(name);
+      else jar.set(name, pair!.slice(name.length + 1));
+    }
+    return new Response(res.body, { status: res.statusCode, headers: { "content-type": String(res.headers["content-type"] ?? "application/json") } });
+  };
+  const stored: unknown[] = [];
+  const storage = { value: null as any, get() { return this.value; }, set(v: unknown) { this.value = v; stored.push(v); } };
+  // a variable, not a literal: this file also typechecks against clients without the option
+  const options = { url: "http://api.test/graphql", fetch: browserFetch, cookies: true, storage };
+  const session = createSessionManager(options);
+  const client = createMgplGraphQLClient({ url: "http://api.test/graphql", fetch: browserFetch, session });
+  const r = await client.auth.login({ email: "owner@apl.test", password: "Lab-Owner-2026!" });
+  ok(r.accessToken === null && r.refreshToken === null && jar.size === 2 && session.getSnapshot().status === "signed_in" && (await client.organization.get()).code === "APL", "[client cookies] login sets the cookies; requests authenticate with them");
+  session.signIn({ ...session.current()!, accessExpiresAt: new Date(Date.now() - 1000).toISOString() });
+  const before = jar.get("__Host-mgpl_refresh");
+  const orgs = await Promise.all([1, 2, 3].map(() => client.organization.get()));
+  ok(orgs.every((o) => o.code === "APL") && refreshes === 1 && jar.get("__Host-mgpl_refresh") !== before, `[client cookies] an expiring session refreshes once through the refresh cookie (${refreshes})`);
+  jar.set("__Host-mgpl_access", "x.y.z");
+  ok((await client.organization.get()).code === "APL" && refreshes === 2, "[client cookies] UNAUTHENTICATED → refresh by cookie and retry");
+  const raw = await session.fetch("http://api.test/graphql", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "{ organization { code } }" }) });
+  ok(((await raw.json()) as Gql).data?.organization.code === "APL", "[client cookies] session.fetch sends the header and credentials (Apollo, urql, …)");
+  ok(!JSON.stringify(stored).match(/"(accessToken|refreshToken)":"/) && stored.every((v) => v === null || (v as { cookie?: boolean }).cookie === true), "[client cookies] the storage never holds a token");
+  await client.auth.logout();
+  ok(jar.size === 0 && session.getSnapshot().status === "signed_out", "[client cookies] logout clears the cookies and the session");
 }
 
 /**

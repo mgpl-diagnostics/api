@@ -4,6 +4,7 @@ import { createYoga, type Plugin } from "graphql-yoga";
 import { API_CSP, fastifySecurity, type RequestSecurity } from "@mgpl-diagnostics/security-kit/server";
 import type { Container } from "./container";
 import { createContext, type RequestContext } from "./graphql/context";
+import { AUTH_MODE_HEADER } from "./graphql/cookies";
 import { allowsLargeBody, costLimit, depthLimit, importBodyLimit } from "./graphql/limits";
 import { buildSchema } from "./graphql/schema";
 import { isDraining } from "./lifecycle";
@@ -63,12 +64,15 @@ export async function buildServer(container: Container): Promise<FastifyInstance
     landingPage: false,
     // domain errors carry their own codes (src/graphql/errors.ts); everything else becomes "Unexpected error"
     maskedErrors: true,
-    cors: { origin: config.corsOrigins.includes("*") ? "*" : config.corsOrigins, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["content-type", "authorization"] },
+    // credentials: browsers send the httpOnly session cookies (src/graphql/cookies.ts) only to these origins;
+    // x-mgpl-auth is the custom header every cookie request carries (CSRF), so cross-origin pages need a preflight
+    cors: { origin: config.corsOrigins.includes("*") ? "*" : config.corsOrigins, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["content-type", "authorization", AUTH_MODE_HEADER], credentials: true },
     logging: config.env === "test" ? false : "warn",
     plugins: [rules(config.introspection)],
-    context: ({ request, req }) => {
+    context: ({ request, req, reply }) => {
       const sec = securityOf(req);
-      return createContext(container, { headers: request.headers, ip: sec.ip ?? undefined, tlsFingerprint: sec.tlsFingerprint?.value });
+      // Fastify keeps every Set-Cookie value (an array), and the handler below adds Yoga's own headers next to them
+      return createContext(container, { headers: request.headers, ip: sec.ip ?? undefined, tlsFingerprint: sec.tlsFingerprint?.value, setCookie: (v) => void reply.header("set-cookie", v) });
     },
   });
 

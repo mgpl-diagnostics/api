@@ -41,8 +41,7 @@ export class AuthService {
 
   /** Spends a refresh token: a new access token and the next refresh token (rotation). */
   async refresh(input: { refreshToken: string; ip?: string; userAgent?: string; device?: DeviceSignals; tlsFingerprint?: string }) {
-    const p = await this.auth.refresh(input);
-    return { token: p.accessToken, expiresAt: p.accessExpiresAt, ...p };
+    return this.auth.refresh(input);
   }
 
   /** Ends the session of an access token (even expired), or of a refresh token. */

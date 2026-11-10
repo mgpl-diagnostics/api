@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { CookieConfig } from "../graphql/cookies";
 
 // Runtime configuration, read once from the environment. Every value has a safe development default;
 // production sets them explicitly (see docs/09-configuration.md).
@@ -19,8 +20,10 @@ export interface Config {
   db: { backend: DbBackend; url: string; sync: boolean; pool: { max: number; min: number; idleMs: number; acquireMs: number } };
   /** Sessions, reset tokens, rate limits and the read cache. Without it they live in process memory (one server only). */
   redisUrl: string | null;
-  /** Origins allowed to call the API from a browser; "*" only in development. */
+  /** Origins allowed to call the API from a browser; "*" only in development. Cookie sessions are accepted from these and from this host. */
   corsOrigins: string[];
+  /** Browser sessions in httpOnly cookies (src/graphql/cookies.ts). */
+  authCookies: CookieConfig;
   /** GraphiQL in the browser at the GraphQL path (development only by default). */
   graphiql: boolean;
   /** Enables introspection (schema download). Development only by default. */
@@ -94,6 +97,16 @@ export function loadEnvFile(path = ".env"): void {
   }
 }
 
+function cookieConfig(env: Record<string, string | undefined>, dev: boolean): CookieConfig {
+  const secure = bool(env.AUTH_COOKIE_SECURE, true);
+  if (!secure && !dev) throw new Error("AUTH_COOKIE_SECURE=false is for development over plain http only");
+  const raw = (env.AUTH_COOKIE_SAMESITE || "strict").toLowerCase();
+  if (!["strict", "lax", "none"].includes(raw)) throw new Error(`AUTH_COOKIE_SAMESITE must be strict, lax or none, got "${raw}"`);
+  const sameSite = (raw[0]!.toUpperCase() + raw.slice(1)) as CookieConfig["sameSite"];
+  if (sameSite === "None" && !secure) throw new Error("AUTH_COOKIE_SAMESITE=none needs AUTH_COOKIE_SECURE (browsers drop SameSite=None cookies without Secure)");
+  return { enabled: bool(env.AUTH_COOKIES, true), secure, sameSite };
+}
+
 const bool = (v: string | undefined, d: boolean) => (v == null || v === "" ? d : ["1", "true", "yes", "on"].includes(v.toLowerCase()));
 const int = (v: string | undefined, d: number) => {
   if (v == null || v === "") return d;
@@ -156,6 +169,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (tlsFingerprintHeader && !/^[a-z0-9-]{1,64}$/.test(tlsFingerprintHeader)) throw new Error(`TLS_FINGERPRINT_HEADER must be a header name like x-ja4, got "${tlsFingerprintHeader}"`);
   // without a trusted proxy any client could send the header, so it would never be read: say so instead
   if (tlsFingerprintHeader && trustedHops < 1) throw new Error("TLS_FINGERPRINT_HEADER needs TRUST_PROXY (the proxy that sets the header must be trusted)");
+  const authCookies = cookieConfig(env, dev);
   const smtpUrl = env.SMTP_URL || null;
   if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) throw new Error("SMTP_URL must start with smtp:// or smtps://");
   if (smtpUrl && !env.MAIL_FROM && !dev) throw new Error('MAIL_FROM is required with SMTP_URL (e.g. "Maa Gayatri Path Lab <no-reply@your-domain>")');
@@ -172,6 +186,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     redisUrl: env.REDIS_URL || null,
     corsOrigins,
+    authCookies,
     graphiql: bool(env.GRAPHIQL, dev),
     introspection: bool(env.INTROSPECTION, dev),
     bodyLimit: int(env.BODY_LIMIT_BYTES, 2_000_000),

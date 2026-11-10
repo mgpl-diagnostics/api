@@ -4,8 +4,11 @@
 
 auth-kit owns passwords and sessions (JWT mode). `login` returns two tokens:
 
-- **access token**: an HS256 JWT `{ sub, org, sid, iat, exp, iss }`, valid 15 minutes, sent as `Authorization: Bearer`;
+- **access token**: an HS256 JWT `{ sub, org, sid, iat, exp, iss }`, valid 15 minutes;
 - **refresh token**: opaque and single-use. `refreshSession` spends it and returns a new pair.
+
+Browsers hold them in **httpOnly cookies**; other clients send them as `Authorization: Bearer`
+([Cookies or bearer](#cookies-or-bearer)).
 
 Revocation still applies at once: every request checks that the session (`sid`) exists and re-reads
 the user. No store ever holds a raw token, only `hashToken(token)` (SHA-256).
@@ -46,11 +49,52 @@ sequenceDiagram
 
 - **Rotation.** A spent refresh token presented again within 15 s (two tabs refreshing at once) is only
   refused; later, it ends the session and is audited (`auth.refresh_reuse`).
-- **Logout.** `logout` ends the bearer's session, or the session of `logout(refreshToken)` (works with an
-  expired access token).
+- **Logout.** `logout` ends the session of `logout(refreshToken)`, else the bearer's (works with an
+  expired access token), else the session of the cookies, which it clears.
 - **Rotating the secret.** Set `JWT_SECRET=new,old`, deploy, wait 15 minutes, then set `JWT_SECRET=new`.
 
 Session operations: `mySessions` (with `deviceId` and `deviceInfo`), `revokeSession`, `logout`, `logoutOtherSessions`.
+
+### Cookies or bearer
+
+Two ways to hold the same tokens. The server decides per request; nothing else changes (sessions,
+device binding, rotation and revocation work the same).
+
+| | Browser (dashboard, any web app) | Scripts, servers, tests, native apps |
+|---|---|---|
+| The client sends | `x-mgpl-auth: cookie` on every request, with `credentials: "include"` | `Authorization: Bearer <accessToken>` |
+| `login`, `refreshSession`, `switchOrganization` | set the tokens as cookies; `accessToken`, `refreshToken` and `token` are **null** in the answer | return the tokens in the answer |
+| `refreshSession` | no argument: the refresh cookie | `refreshSession(refreshToken)` |
+| `logout` | ends the session of the refresh cookie and clears both cookies (always answers true) | ends the bearer's session, or `logout(refreshToken)` |
+| SDK | `createSessionManager({ cookies: true })` (client 1.7+) | the default |
+
+The cookies are `__Host-mgpl_access` (until the access token expires) and `__Host-mgpl_refresh` (until the
+refresh token's idle or maximum age), both `HttpOnly; Secure; SameSite=Strict; Path=/`. `__Host-` means the
+browser refuses them without `Secure`, with a `Domain` or on another path, so no subdomain can set or
+shadow them. No script on the page can read them, so an XSS bug cannot copy a token, not even by calling
+`refreshSession`: a cookie session's tokens never appear in an answer. A request with a bearer token
+ignores the cookies.
+
+**CSRF.** A browser sends cookies with any request to the api, so the server reads them only when:
+
+1. the request carries `x-mgpl-auth: cookie`. A cross-site `<form>`, `<img>` or link cannot set a custom
+   header, and a cross-origin script can only send one after a CORS preflight, which only `CORS_ORIGINS` pass;
+2. its `Origin` is this host or one of `CORS_ORIGINS` (a request without `Origin` must not say
+   `Sec-Fetch-Site: cross-site`);
+3. and `SameSite=Strict` keeps the browser from sending them from another site at all.
+
+Otherwise the cookies are ignored and the request is anonymous. A failed cookie refresh (`INVALID_TOKEN`)
+leaves the cookies as they are, so a tab that loses a refresh race cannot clear the cookies the winner just
+set; the SDK signs out and the next `logout` or login replaces them.
+
+| Setting | Default | Env |
+|---|---|---|
+| Cookie sessions | on | `AUTH_COOKIES` (`false`: every client gets bearer tokens) |
+| `Secure` and the `__Host-` prefix | on | `AUTH_COOKIE_SECURE` (`false` only outside production, for plain-http development; the names lose the prefix) |
+| `SameSite` | `strict` | `AUTH_COOKIE_SAMESITE` (`strict`, `lax`, `none`). Strict works when the app and the api share a site (same host, or `app.lab.in` and `api.lab.in`); `none` (needs Secure) only when they are on different sites, and then CSRF rests on rules 1 and 2 |
+
+On the VPS ([20-vps.md](20-vps.md)) the dashboard and the api share one origin (nginx sends `/graphql` to the
+api), so the defaults fit and `CORS_ORIGINS` is that origin.
 
 ### Device signals
 

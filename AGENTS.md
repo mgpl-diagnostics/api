@@ -52,8 +52,10 @@ Dockerfile, docker-compose.yml, deploy/   image; PostgreSQL ← PgBouncer ← N 
     before changing one. No doctor referral commissions.
 12. **Jobs.** Permissions are checked before a job is queued; processors call services (never GraphQL);
     job payloads carry ids and the actor, never tokens or secrets. Every job runs both on BullMQ and in-process.
-13. **Tokens.** Access tokens are auth-kit JWTs; refresh tokens and device binding live in auth-kit. Device
-    signals are collected by security-kit in the client; `src/graphql/device.ts` maps DeviceInput to auth-kit.
+13. **Tokens.** Access tokens are auth-kit JWTs; refresh tokens and device binding live in auth-kit. Browsers get
+    them as httpOnly `__Host-` cookies (`src/graphql/cookies.ts`), read only with the `x-mgpl-auth: cookie` header
+    from an allowed origin (CSRF), and a cookie session's tokens never appear in an answer; bearer tokens stay for
+    every other client. Device signals are collected by security-kit in the client; `src/graphql/device.ts` maps DeviceInput to auth-kit.
     Security headers and the client IP come from security-kit's `fastifySecurity` (never Fastify's own
     `req.ip` with a trust-all proxy setting: the left X-Forwarded-For entry is client-controlled).
 14. **Replicas.** Nothing per-user lives in process memory when `REDIS_URL` is set: sessions, refresh tokens,
