@@ -15,6 +15,7 @@ export const ERROR_CODES = [
   "PERIOD_LOCKED", "CREDIT_LIMIT_EXCEEDED",
   // auth-kit's own codes, passed through
   "INVALID_CREDENTIALS", "ACCOUNT_DISABLED", "INVITE_PENDING", "ORG_REQUIRED", "RATE_LIMITED", "WEAK_PASSWORD", "INVALID_TOKEN",
+  "ORG_UNAVAILABLE",
   // partner-lab imports (docs/18-imports.md)
   "UNSUPPORTED_REPORT", "REPORT_ALREADY_APPLIED", "BOOKING_PATIENT_MISMATCH", "FILE_TOO_LARGE",
 ] as const;
@@ -33,7 +34,13 @@ export const badInput = (message: string) => apiError("BAD_USER_INPUT", message,
 /** Domain errors from the kits → GraphQL errors with codes. Anything unknown is re-thrown (and masked by Yoga). */
 export function toGraphQLError(e: unknown): unknown {
   if (e instanceof GraphQLError) return e;
-  if (e instanceof AuthError) return apiError(e.code as ErrorCode, e.message, e.statusCode, e.details.retryAfterMs ? { retryAfterMs: e.details.retryAfterMs } : {});
+  if (e instanceof AuthError) {
+    const extra: Record<string, unknown> = {};
+    if (e.details.retryAfterMs) extra.retryAfterMs = e.details.retryAfterMs;
+    // ORG_REQUIRED: the labs whose account matched the password, for a pick list (ids stay on the server)
+    if (e.details.organizations?.length) extra.organizations = e.details.organizations.map((o) => ({ code: o.code, name: o.name }));
+    return apiError(e.code as ErrorCode, e.message, e.statusCode, extra);
+  }
   if (e instanceof ForbiddenError) return apiError("FORBIDDEN", e.message, 403);
   if (e instanceof UnsupportedReportError) return apiError("UNSUPPORTED_REPORT", e.message, 422);
   if (e instanceof FileTooLargeError) return apiError("FILE_TOO_LARGE", e.message, 413, { maxBytes: e.maxBytes });

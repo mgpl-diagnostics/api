@@ -250,6 +250,26 @@ async function suite(db: Db, tag: string) {
   ok(!!same?.refreshToken, `[${tag}] refresh on the same device (new fingerprint) works`);
   ok(code(await gql(null, "mutation($r: String!, $d: DeviceInput) { refreshSession(refreshToken: $r, device: $d) { refreshToken } }", { r: same.refreshToken, d: { deviceId: "dev-laptop-9999-zzzzzz" } })) === "INVALID_TOKEN" && code(await gql(bound.accessToken, "{ organization { id } }")) === "UNAUTHENTICATED", `[${tag}] refresh from another device → INVALID_TOKEN and the session ends`);
 
+  // ---------------------------------------------------------------- one person in two labs: pick list and switching
+  for (const [org, branch] of [[a.org.id, a.branch.id], [other.org.id, other.branch.id]] as const) {
+    await db.rawRepos.users.create({ orgId: org, name: "Two Labs", email: "two@labs.test", passwordHash: await hashPassword(pw), status: "active", roles: [{ role: "front_desk", branchId: branch }] });
+  }
+  const pick = await gql(null, 'mutation { login(input: { email: "two@labs.test", password: "Lab-Owner-2026!" }) { accessToken } }');
+  const choices = (pick.errors?.[0]?.extensions as { organizations?: { code: string; name: string }[] } | undefined)?.organizations;
+  ok(code(pick) === "ORG_REQUIRED" && choices?.map((o) => `${o.code}:${o.name}`).join() === "APL:API Lab,OTH:Other Lab" && !JSON.stringify(pick).includes(a.org.id), `[${tag}] ORG_REQUIRED lists the labs to pick from (code + name, no ids)`);
+  ok(!(await gql(null, 'mutation { login(input: { email: "two@labs.test", password: "wrong-password" }) { accessToken } }')).errors?.[0]?.extensions?.hasOwnProperty("organizations"), `[${tag}] a wrong password lists no labs`);
+  const solo = await login("x@oth.test");
+  const twoDev = { deviceId: "dev-two-labs-0001" };
+  const inApl = (await gql(null, 'mutation($d: DeviceInput) { login(input: { email: "two@labs.test", password: "Lab-Owner-2026!", orgCode: "apl", device: $d }) { accessToken refreshToken } }', { d: twoDev })).data?.login;
+  const mine = (await gql(inApl.accessToken, "{ myOrganizations { code name current } }")).data?.myOrganizations;
+  ok(mine?.map((o: any) => `${o.code}:${o.current}`).join() === "APL:true,OTH:false", `[${tag}] myOrganizations: both labs, the current one marked`);
+  ok((await gql(solo, "{ myOrganizations { code } }")).data?.myOrganizations.length === 1, `[${tag}] myOrganizations: one lab for a one-lab person`);
+  const moved = (await gql(inApl.accessToken, 'mutation($d: DeviceInput) { switchOrganization(orgCode: "OTH", device: $d) { accessToken refreshToken user { email } } }', { d: twoDev })).data?.switchOrganization;
+  ok((await gql(moved?.accessToken, "{ organization { code } }")).data?.organization.code === "OTH" && code(await gql(inApl.accessToken, "{ organization { code } }")) === "UNAUTHENTICATED", `[${tag}] switchOrganization: new tokens work in the other lab, the old session ends`);
+  ok(code(await gql(moved.accessToken, 'mutation { switchOrganization(orgCode: "OTH") { accessToken } }')) === "ORG_UNAVAILABLE" && code(await gql(moved.accessToken, 'mutation { switchOrganization(orgCode: "NOPE") { accessToken } }')) === "ORG_UNAVAILABLE" && code(await gql(solo, 'mutation { switchOrganization(orgCode: "OTH") { accessToken } }')) === "ORG_UNAVAILABLE", `[${tag}] switch to the current lab, an unknown code or a lab without an account → ORG_UNAVAILABLE`);
+  ok(code(await gql(null, 'mutation { switchOrganization(orgCode: "APL") { accessToken } }')) === "UNAUTHENTICATED", `[${tag}] switchOrganization needs a session`);
+  ok(code(await gql(moved.accessToken, 'mutation { switchOrganization(orgCode: "APL", device: { deviceId: "dev-elsewhere-0009" }) { accessToken } }')) === "INVALID_TOKEN" && code(await gql(moved.accessToken, "{ organization { code } }")) === "UNAUTHENTICATED", `[${tag}] switch from another device → INVALID_TOKEN and the session ends`);
+
   // ---------------------------------------------------------------- background documents (in-process queue here; BullMQ in [worker])
   const otherAgain = await login("x@oth.test");
   const owner2 = await login("owner@apl.test");
