@@ -15,7 +15,7 @@
     },
     {
       "name": "auth-kit",
-      "ref": "38cb34777afc366dc8c9818816ac2870228d2640"
+      "ref": "v1.5.0"
     },
     {
       "name": "db-kit",
