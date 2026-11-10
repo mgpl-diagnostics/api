@@ -1,8 +1,21 @@
+import { AuthError } from "@mgpl-diagnostics/auth-kit";
 import type { RoleAssignment, User } from "@mgpl-diagnostics/db-kit";
 import type { RequestContext as Ctx } from "../graphql/context";
+import type { TokenPairLike } from "../graphql/cookies";
 import { unauthenticated, withErrorCodes } from "../graphql/errors";
 import { actorOf, authorize } from "../graphql/guards";
 import { deviceOf, type DeviceInput } from "../graphql/device";
+
+/**
+ * Hands new tokens to the client: as httpOnly cookies (and null in the body) for a cookie session, in the
+ * body otherwise. A script on the page never reads a cookie session's tokens, not even through refresh.
+ */
+function deliver<P extends TokenPairLike>(ctx: Ctx, pair: P, asCookies: boolean) {
+  const body = { ...pair, token: pair.accessToken, expiresAt: pair.accessExpiresAt };
+  if (!asCookies) return body;
+  ctx.cookies.set(pair);
+  return { ...body, accessToken: null, refreshToken: null, token: null };
+}
 
 /** auth-kit: sign-in, sessions, passwords; users and roles. */
 export const authController = withErrorCodes({
@@ -41,18 +54,33 @@ export const authController = withErrorCodes({
   Mutation: {
     login: async (_: unknown, { input: { device, ...input } }: { input: { email: string; password: string; orgCode?: string | null; device?: DeviceInput | null } }, ctx: Ctx) => {
       const r = await ctx.services.auth.login({ ...input, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(device), tlsFingerprint: ctx.tlsFingerprint });
-      return { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt };
+      return deliver(ctx, { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt, refreshToken: r.refreshToken!, refreshExpiresAt: r.refreshExpiresAt! }, ctx.cookies.requested);
     },
     switchOrganization: async (_: unknown, a: { orgCode: string; device?: DeviceInput | null }, ctx: Ctx) => {
       if (!ctx.token) throw unauthenticated();
+      // the old session ends: a cookie session gets the new one as cookies too
+      const asCookies = ctx.tokenSource === "cookie";
       const r = await ctx.services.auth.switchOrganization({ token: ctx.token, orgCode: a.orgCode, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device), tlsFingerprint: ctx.tlsFingerprint });
-      return { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt };
+      return deliver(ctx, { ...r, accessToken: r.token, accessExpiresAt: r.expiresAt, refreshToken: r.refreshToken!, refreshExpiresAt: r.refreshExpiresAt! }, asCookies);
     },
-    refreshSession: (_: unknown, a: { refreshToken: string; device?: DeviceInput | null }, ctx: Ctx) =>
-      ctx.services.auth.refresh({ refreshToken: a.refreshToken, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device), tlsFingerprint: ctx.tlsFingerprint }),
+    refreshSession: async (_: unknown, a: { refreshToken?: string | null; device?: DeviceInput | null }, ctx: Ctx) => {
+      // a refresh token in the arguments: bearer client, tokens in the body. None: the refresh cookie.
+      // A failed cookie refresh leaves the cookies alone: when two refreshes race, the loser must not
+      // clear the cookies the winner just set. The client signs out; logout clears them.
+      const asCookies = !a.refreshToken;
+      const refreshToken = a.refreshToken || ctx.cookies.refresh;
+      if (!refreshToken) throw new AuthError("INVALID_TOKEN", "Sign in again");
+      const p = await ctx.services.auth.refresh({ refreshToken, ip: ctx.ip, userAgent: ctx.userAgent, device: deviceOf(a.device), tlsFingerprint: ctx.tlsFingerprint });
+      return deliver(ctx, p, asCookies);
+    },
     logout: async (_: unknown, a: { refreshToken?: string | null }, ctx: Ctx) => {
-      const token = a.refreshToken || ctx.token;
-      if (!token) throw unauthenticated();
+      // a cookie session ends by its refresh cookie (the access cookie may have expired already)
+      const token = a.refreshToken || (ctx.tokenSource === "bearer" ? ctx.token : null) || ctx.cookies.refresh || ctx.token;
+      if (ctx.cookies.requested) ctx.cookies.clear();
+      if (!token) {
+        if (ctx.cookies.requested) return true; // nothing left to end: signing out is idempotent
+        throw unauthenticated();
+      }
       await ctx.services.auth.logout(token);
       return true;
     },

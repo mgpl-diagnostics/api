@@ -59,20 +59,23 @@ export const authTypeDefs = /* GraphQL */ `
   }
 
   """
-  Tokens after login or refresh. Send the access token as 'Authorization: Bearer <accessToken>'; when
-  it expires (UNAUTHENTICATED), trade the refresh token for a new pair with refreshSession.
+  Tokens after login, refresh or a lab switch. Two ways to hold them (docs/06-auth-and-permissions.md):
+  - browsers send the header 'x-mgpl-auth: cookie' (with credentials): the tokens are set as httpOnly
+    cookies, and accessToken, refreshToken and token are null here, so no script can read them;
+  - other clients (scripts, servers, native apps) send 'Authorization: Bearer <accessToken>' and get the
+    tokens here; when the access token expires (UNAUTHENTICATED), refreshSession trades the refresh token.
   """
   type LoginResult {
-    "Short-lived HS256 JWT (default 15 minutes). Every request still checks the session and re-reads the user."
-    accessToken: String!
+    "Short-lived HS256 JWT (default 15 minutes). Every request still checks the session and re-reads the user. null for a cookie session."
+    accessToken: String
     accessExpiresAt: DateTime!
-    "Opaque and single-use: refreshSession returns the next one. The server stores only its SHA-256."
-    refreshToken: String!
+    "Opaque and single-use: refreshSession returns the next one. The server stores only its SHA-256. null for a cookie session."
+    refreshToken: String
     "Slides with each refresh (idle window), never past the session's maximum age."
     refreshExpiresAt: DateTime!
     user: User!
     "Same as accessToken."
-    token: String! @deprecated(reason: "Use accessToken.")
+    token: String @deprecated(reason: "Use accessToken.")
     "Same as accessExpiresAt."
     expiresAt: DateTime! @deprecated(reason: "Use accessExpiresAt.")
   }
@@ -109,19 +112,20 @@ export const authTypeDefs = /* GraphQL */ `
   extend type Mutation {
     login(input: LoginInput!): LoginResult!
     """
-    Spends a refresh token and returns a new access token and the next refresh token. A refresh token
+    Spends a refresh token and returns a new access token and the next refresh token: the one given, or
+    for a cookie session (no argument) the refresh cookie, and the new tokens are set as cookies. A refresh token
     used twice ends its session (it was copied); within a few seconds (two tabs) the second use only fails.
     Send the same device as at login: a refresh from another device id ends the session (DEVICE_BINDING).
     INVALID_TOKEN when it is unknown, spent or expired: sign in again.
     """
-    refreshSession(refreshToken: String!, device: DeviceInput): LoginResult!
+    refreshSession(refreshToken: String, device: DeviceInput): LoginResult!
     """
     Moves this session to the signed-in person's account in another lab (same email, active there), without
-    the password. This session ends; use the returned tokens. Send the same device as at login, or the
+    the password. This session ends; use the returned tokens (a cookie session gets them as cookies). Send the same device as at login, or the
     session ends (INVALID_TOKEN). ORG_UNAVAILABLE when there is no such account, or it is the current lab.
     """
     switchOrganization(orgCode: String!, device: DeviceInput): LoginResult!
-    "Ends this session: the bearer token (even an expired access token), or the refresh token when given."
+    "Ends this session: the refresh token when given, else the bearer token (even an expired access token), else the session cookies (which are cleared)."
     logout(refreshToken: String): Boolean!
     "Ends every other session of the signed-in user; returns how many."
     logoutOtherSessions: Int!

@@ -23,7 +23,10 @@ variables already set in the real environment win over the file.
 | `DB_POOL_ACQUIRE_MS` | `30000` | A query that waited this long for a free connection fails |
 | `DB_SYNC` | `true` | Create missing tables / indexes on start. `false` on every replica when several run, with `npm run db:sync` once per release |
 | `REDIS_URL` | empty | Sessions, refresh tokens, login limits, db-kit's read cache and the job queues (BullMQ). Required for more than one server and for the worker |
-| `CORS_ORIGINS` | `*` in development, empty in production | Comma-separated origins. `*` is refused in production |
+| `CORS_ORIGINS` | `*` in development, empty in production | Comma-separated origins. `*` is refused in production. These may send credentials (the session cookies) and the `x-mgpl-auth` header; cookie sessions are accepted from them and from the api's own host |
+| `AUTH_COOKIES` | `true` | Browser sessions in httpOnly cookies for clients that send `x-mgpl-auth: cookie` ([06](06-auth-and-permissions.md#cookies-or-bearer)). `false`: bearer tokens only |
+| `AUTH_COOKIE_SECURE` | `true` | `Secure` and the `__Host-` names. `false` only outside production (plain-http development) |
+| `AUTH_COOKIE_SAMESITE` | `strict` | `strict`, `lax` or `none` (`none` needs Secure: app and api on different sites) |
 | `GRAPHIQL` | on in development | GraphiQL at the endpoint (GET) |
 | `INTROSPECTION` | on in development | Off adds `NoSchemaIntrospectionCustomRule` |
 | `BODY_LIMIT_BYTES` | `2000000` | Request body limit (bank CSV imports count). `importExternalReport` alone may send up to a base64 `IMPORT_MAX_BYTES` |

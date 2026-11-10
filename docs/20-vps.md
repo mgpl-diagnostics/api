@@ -60,7 +60,7 @@ Edit `.env` and replace every `CHANGE_ME` ([`deploy/production.env.example`](../
 | `HTTP_PORT` | `127.0.0.1:8080`: nginx is reachable only through Caddy |
 | `TRUST_PROXY` | `2` (Caddy, then nginx): login limits see the real client IP |
 | `NODE_ENV` | `production` |
-| `CORS_ORIGINS` | `https://lab.example.in` |
+| `CORS_ORIGINS` | `https://lab.example.in`: the one origin of the dashboard and the api. Sign-in cookies (httpOnly, Secure, SameSite=Strict) are accepted only from it ([06](06-auth-and-permissions.md#cookies-or-bearer)); leave `AUTH_COOKIE_*` at their defaults |
 | `PASSWORD_RESET_URL` | `https://lab.example.in/reset-password` |
 | `JWT_SECRET` | `openssl rand -base64 48` |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 24` |
@@ -162,6 +162,7 @@ docker compose up -d --scale api=3        # more api replicas
 | ☐ | DNS A record → server; ufw allows only 22, 80, 443; SSH keys only |
 | ☐ | `.env` has no `CHANGE_ME`, `chmod 600`, a copy in a password manager |
 | ☐ | `HTTP_PORT=127.0.0.1:8080`, `TRUST_PROXY=2`, Caddy serves HTTPS |
+| ☐ | `CORS_ORIGINS` is exactly `https://` + your domain; after signing in, the browser shows `__Host-mgpl_access` and `__Host-mgpl_refresh` as HttpOnly cookies and no token in Local Storage |
 | ☐ | First lab seeded, owner password changed after the first sign-in |
 | ☐ | A password-reset mail arrives (SMTP works) |
 | ☐ | Daily dump runs, copies leave the server, one restore tested |

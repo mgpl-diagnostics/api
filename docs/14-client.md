@@ -55,15 +55,25 @@ flowchart LR
     OTHER["Apollo · urql · graphql-request"] -- "fetch: session.fetch" --> SM
     SDK --> SM
   end
-  SM -- "Bearer access token · refreshSession (single flight, Web Locks) · device signals" --> API["api"]
+  SM -- "httpOnly cookies (browsers) or Bearer token · refreshSession (single flight, Web Locks) · device signals" --> API["api"]
 ```
 
 The client's [docs/session.md](https://github.com/mgpl-diagnostics/client/blob/main/docs/session.md)
 has the details: storages, cross-tab refresh, device signals and what they contain.
 
+In a browser, use cookie mode (client 1.7+): the api keeps the tokens in httpOnly cookies and the page never
+sees one ([06](06-auth-and-permissions.md#cookies-or-bearer)).
+
+```ts
+const session = createSessionManager({ url: "/graphql", cookies: true, storage: webSessionStorage() }); // stores expiry times and the user, never a token
+const mgpl = createMgplGraphQLClient({ url: "/graphql", session });
+```
+
 ## Without the SDK
 
 Any GraphQL client works. Send `Authorization: Bearer <accessToken>` and
 `content-type: application/json` to `POST /graphql`. When a request returns `UNAUTHENTICATED`, call
-`refreshSession(refreshToken, device)` once and retry; on `INVALID_TOKEN`, sign in again. The schema is
+`refreshSession(refreshToken, device)` once and retry; on `INVALID_TOKEN`, sign in again. From a browser,
+send `x-mgpl-auth: cookie` with `credentials: "include"` instead of the Authorization header, and call
+`refreshSession(device)` without the token. The schema is
 in [schema.graphql](../schema.graphql) for code generators; introspection is off in production.
