@@ -1,19 +1,26 @@
-# The whole backend on one host: PostgreSQL ← PgBouncer ← N api replicas ← nginx, plus Redis and the worker.
-# Guide: docs/17-scaling.md.
+# The whole system on one host: PostgreSQL ← PgBouncer ← N api replicas, the worker, Redis, the dashboard,
+# and nginx in front (/graphql and /health → api, everything else → dashboard). Guides: docs/17-scaling.md,
+# docs/18-updates.md.
 #
 #   cp .env.example .env                        # set JWT_SECRET, CORS_ORIGINS, POSTGRES_PASSWORD, …
-#   NODE_AUTH_TOKEN=… docker compose build       # the kits come from GitHub Packages (read:packages)
-#   docker compose up -d                         # API_REPLICAS replicas (default 2) on http://localhost:8080
-#   docker compose up -d --scale api=4           # more or fewer, at any time
+#   docker compose up -d                         # pulls the released images; http://localhost:8080
+#   docker compose up -d --scale api=4           # more or fewer api replicas, at any time
+#
+# Updating: set MGPL_API_VERSION / MGPL_DASHBOARD_VERSION in .env (default "latest"), then
+#   docker compose pull && docker compose up -d
+# db-sync adds new tables first; the replicas restart after it. Owners and admins see new releases in the
+# dashboard (Updates).
+#
+# Building the api from this checkout instead of pulling it:
+#   NODE_AUTH_TOKEN=… docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # The api and the worker read .env too; the values below (database, Redis, proxy) win over it, because the
 # services find each other by name inside this network.
 name: mgpl
 
-# api and worker run the image that db-sync builds (one build, three commands)
+# api, worker and db-sync run the same image (three commands)
 x-api: &api
-  image: mgpl-api
-  pull_policy: never
+  image: ${MGPL_API_IMAGE:-ghcr.io/mgpl-diagnostics/api}:${MGPL_API_VERSION:-latest}
   restart: unless-stopped
   env_file:
     - path: .env
@@ -74,10 +81,7 @@ services:
 
   # Creates missing tables once per `up`, straight on PostgreSQL, before any replica starts (they run with DB_SYNC=false).
   db-sync:
-    image: mgpl-api
-    build:
-      context: .
-      secrets: [npm_token]
+    image: ${MGPL_API_IMAGE:-ghcr.io/mgpl-diagnostics/api}:${MGPL_API_VERSION:-latest}
     env_file:
       - path: .env
         required: false
@@ -119,16 +123,21 @@ services:
       disable: true
     stop_grace_period: 40s
 
+  # The staff dashboard (mgpl-diagnostics/dashboard). The browser reaches it and the api through nginx on one
+  # origin, so no CORS and one trusted proxy (TRUST_PROXY=1). MGPL_API_URL is only for its own /graphql fallback.
+  dashboard:
+    image: ${MGPL_DASHBOARD_IMAGE:-ghcr.io/mgpl-diagnostics/dashboard}:${MGPL_DASHBOARD_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      MGPL_API_URL: http://api:4000
+    depends_on: [api]
+
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports: ["${HTTP_PORT:-8080}:80"]
     volumes: [./deploy/nginx.conf:/etc/nginx/nginx.conf:ro]
-    depends_on: [api]
-
-secrets:
-  npm_token:
-    environment: NODE_AUTH_TOKEN
+    depends_on: [api, dashboard]
 
 volumes:
   pgdata:

@@ -121,14 +121,16 @@ Stopping one replica of three under constant traffic through nginx gave 40 of 40
 
 ## Docker Compose
 
-[`docker-compose.yml`](../docker-compose.yml) runs the whole backend on one host: PostgreSQL, PgBouncer
-(transaction mode), Redis (AOF on), a one-shot `db-sync`, `API_REPLICAS` API containers, a worker and
-nginx ([`deploy/nginx.conf`](../deploy/nginx.conf)) in front of the replicas on `HTTP_PORT`.
+[`docker-compose.yml`](../docker-compose.yml) runs the whole system on one host from the released images
+([18-updates.md](18-updates.md)): PostgreSQL, PgBouncer (transaction mode), Redis (AOF on), a one-shot
+`db-sync`, `API_REPLICAS` API containers, a worker, the dashboard and nginx
+([`deploy/nginx.conf`](../deploy/nginx.conf)) in front on `HTTP_PORT` (`/graphql` and `/health` → the
+replicas, everything else → the dashboard).
 
 ```bash
 cp .env.example .env     # NODE_ENV=production, JWT_SECRET, CORS_ORIGINS, POSTGRES_PASSWORD, SMTP_URL, …
-NODE_AUTH_TOKEN=…  docker compose build          # the kits come from GitHub Packages (read:packages)
-docker compose up -d                              # http://localhost:8080/graphql
+docker compose up -d                              # pulls the images; http://localhost:8080 (/graphql: the api)
+NODE_AUTH_TOKEN=… docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build   # or build the api here
 docker compose up -d --scale api=4                # change the number of replicas at any time
 docker compose exec -e PGPASSWORD=… postgres psql -h pgbouncer -p 6432 -U postgres pgbouncer -c 'SHOW POOLS'
 ```

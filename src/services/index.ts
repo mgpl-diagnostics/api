@@ -18,6 +18,8 @@ import { PeriodService } from "./period.service";
 import { ReceivablesService } from "./receivables.service";
 import { ReportService } from "./report.service";
 import { SettlementService } from "./settlement.service";
+import { SystemService } from "./system.service";
+import type { Config } from "../config/env";
 
 export interface ServiceDeps {
   repos: Repositories;
@@ -28,7 +30,16 @@ export interface ServiceDeps {
   samples: boolean;
   /** The job queue (BullMQ or inline); a getter because the inline queue needs the services first. */
   jobs: () => JobQueue;
+  /** Update notices (UPDATE_* settings); off when omitted. */
+  updates?: Config["updates"];
+  /** The HTTP client for the release feed (tests). */
+  fetch?: typeof fetch;
 }
+
+const NO_UPDATES: Config["updates"] = {
+  enabled: false, feedUrl: "https://api.github.com", repos: { api: "mgpl-diagnostics/api", dashboard: "mgpl-diagnostics/dashboard" },
+  images: { api: "ghcr.io/mgpl-diagnostics/api", dashboard: "ghcr.io/mgpl-diagnostics/dashboard" }, githubToken: null, intervalMs: 6 * 3600_000,
+};
 
 /** Every service, one instance each. Services know nothing about GraphQL; controllers call them. */
 export function createServices(d: ServiceDeps) {
@@ -49,6 +60,7 @@ export function createServices(d: ServiceDeps) {
     exports: new ExportService(d.repos),
     documents: new DocumentService(d.repos, { lab: d.lab, samples: d.samples }),
     jobs: new JobService(d.repos, d.jobs),
+    system: new SystemService(d.updates ?? NO_UPDATES, d.fetch),
   };
 }
 

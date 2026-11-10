@@ -192,3 +192,9 @@ and runnable examples are in [examples/](examples/).
 | query | `renderReport(request: JSON!, format: DocumentFormat, variant: ReportVariant, design: ReportDesign, fileName: String): Document!` | `report:read` | Any report: request = report-kit's ReportRequest JSON (patient + tests \| profile \| report \| sample). |
 | query | `reportTemplates: TemplateCatalog!` | (signed in) |  |
 | mutation | `startDocumentJob(input: DocumentJobInput!): Job!` | `invoice:read`, `report:read` | Renders a stored invoice or a booking's reports in the background; poll job(id) until completed or failed. |
+
+## system
+
+| Kind | Operation | Permission | Notes |
+|---|---|---|---|
+| query | `systemUpdates(dashboardVersion: String, refresh: Boolean): SystemUpdates!` | `settings:manage` | Owner and admin (settings:manage): is a newer api or dashboard release out, what changed, and how to update. The dashboard passes its own version; refresh skips the cache (at most once a minute). |

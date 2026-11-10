@@ -63,6 +63,19 @@ export interface Config {
    * requests in flight; after `timeoutMs` in all it exits anyway.
    */
   shutdown: { drainMs: number; timeoutMs: number };
+  /**
+   * Update notices for owners and admins (`systemUpdates`): the api compares its own version and the
+   * dashboard's with the newest GitHub releases of `repos`. `UPDATE_CHECK=false` turns the outbound check off
+   * (air-gapped servers); `githubToken` only raises GitHub's rate limit (no scopes needed for public repos).
+   */
+  updates: {
+    enabled: boolean;
+    feedUrl: string;
+    repos: { api: string; dashboard: string };
+    images: { api: string; dashboard: string };
+    githubToken: string | null;
+    intervalMs: number;
+  };
 }
 
 /**
@@ -102,6 +115,24 @@ function dbPool(env: Record<string, string | undefined>): Config["db"]["pool"] {
   if (max < 1) throw new Error("DB_POOL_MAX must be at least 1");
   if (min > max) throw new Error(`DB_POOL_MIN (${min}) cannot be larger than DB_POOL_MAX (${max})`);
   return { max, min, idleMs: int(env.DB_POOL_IDLE_MS, 10_000), acquireMs: int(env.DB_POOL_ACQUIRE_MS, 30_000) };
+}
+
+const REPO = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+function updatesConfig(env: Record<string, string | undefined>, mode: Config["env"]): Config["updates"] {
+  const repos = { api: env.UPDATE_REPO_API || "mgpl-diagnostics/api", dashboard: env.UPDATE_REPO_DASHBOARD || "mgpl-diagnostics/dashboard" };
+  for (const [k, v] of Object.entries(repos)) if (!REPO.test(v)) throw new Error(`UPDATE_REPO_${k.toUpperCase()} must be owner/name, got "${v}"`);
+  const feedUrl = (env.UPDATE_FEED_URL || "https://api.github.com").replace(/\/+$/, "");
+  if (!/^https?:\/\//.test(feedUrl)) throw new Error("UPDATE_FEED_URL must be an http(s) URL");
+  const registry = (env.IMAGE_REGISTRY || "ghcr.io").replace(/\/+$/, "");
+  return {
+    // tests make no outbound calls unless they ask for them
+    enabled: bool(env.UPDATE_CHECK, mode !== "test"),
+    feedUrl,
+    repos,
+    images: { api: `${registry}/${repos.api.toLowerCase()}`, dashboard: `${registry}/${repos.dashboard.toLowerCase()}` },
+    githubToken: env.UPDATE_GITHUB_TOKEN || null,
+    intervalMs: Math.max(60_000, int(env.UPDATE_CHECK_INTERVAL_MS, 6 * 3600_000)),
+  };
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -158,5 +189,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     smtp: smtpUrl ? { url: smtpUrl, from: env.MAIL_FROM || "MGPL Diagnostics <no-reply@localhost.localdomain>" } : null,
     mailWebhookUrl: env.MAIL_WEBHOOK_URL || null,
     shutdown: { drainMs: int(env.SHUTDOWN_DRAIN_MS, mode === "production" ? 5_000 : 0), timeoutMs: int(env.SHUTDOWN_TIMEOUT_MS, 30_000) },
+    updates: updatesConfig(env, mode),
   };
 }
