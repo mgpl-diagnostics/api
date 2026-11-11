@@ -79,13 +79,14 @@ and runnable examples are in [examples/](examples/).
 | query | `sampleByBarcode(barcode: String!): Sample` | `sample:read` |  |
 | mutation | `amendReport(id: ID!): Report!` | `report:amend` |  |
 | mutation | `cancelBooking(id: ID!): Booking!` | `booking:cancel` |  |
-| mutation | `collectSample(id: ID!): Sample!` | `sample:collect` |  |
+| mutation | `collectSample(id: ID!, barcode: String): Sample!` | `sample:collect` | Marks the sample collected. barcode: the tube's own label, when it is not the generated one (unique in the organisation). |
 | mutation | `createBooking(input: CreateBookingInput!): CreateBookingResult!` | `booking:create` |  |
 | mutation | `createDoctor(input: DoctorInput!): Doctor!` | `doctor:manage` |  |
 | mutation | `createReport(bookingId: ID!, testCode: String!, testName: String): Report!` | `report:enter` |  |
 | mutation | `receiveSample(id: ID!): Sample!` | `sample:receive` |  |
 | mutation | `registerPatient(input: RegisterPatientInput!): Patient!` | `patient:create` |  |
 | mutation | `rejectSample(id: ID!, reason: String!): Sample!` | `sample:reject` |  |
+| mutation | `relabelSample(id: ID!, barcode: String!): Sample!` | `sample:collect` | A new barcode for a sample that the lab has not received yet (BARCODE_TAKEN when another sample has it). |
 | mutation | `releaseReport(id: ID!): Report!` | `report:release` |  |
 | mutation | `saveResults(reportId: ID!, results: [ResultInput!]!): Report!` | `report:enter` |  |
 | mutation | `updateDoctor(id: ID!, input: DoctorPatch!): Doctor!` | `doctor:manage` |  |

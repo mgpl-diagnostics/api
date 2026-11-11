@@ -1,19 +1,38 @@
-import { flagResult, formatRange, getTestByCode, type Sex as CatalogSex } from "@mgpl-diagnostics/catalog-kit";
+import { computeCalculated, flagResult, formatRange, getTestByCode, type Sex as CatalogSex } from "@mgpl-diagnostics/catalog-kit";
 import { ConflictError, saveResults, transitionReport, ValidationError, type Booking, type Id, type Report, type Repositories, type ResultValue, type Sex } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
 import { mustOwn } from "./util";
 
 const catalogSex = (s: Sex): CatalogSex | undefined => (s === "male" || s === "female" ? s : undefined);
 
+/** Age in years today, from the date of birth or the age recorded at registration. */
+function patientAge(p: { dob?: Date | string | null; ageYears?: number | null } | null | undefined): number | undefined {
+  if (!p) return undefined;
+  if (p.dob) {
+    const dob = new Date(p.dob);
+    if (!Number.isNaN(dob.getTime())) return (Date.now() - dob.getTime()) / (365.2425 * 24 * 3600 * 1000);
+  }
+  return p.ageYears ?? undefined;
+}
+
 /**
  * Fills unit, range and flag from catalog-kit when the report's test is in the catalog and the
  * result does not carry them. Values sent explicitly are kept (the pathologist has the last word).
+ * Calculated parameters that were not entered (indirect bilirubin, globulin, A/G ratio, eGFR…) are
+ * computed from the entered values with catalog-kit's formulas and appended, in catalog order.
  */
-export function withCatalogDefaults(testCode: string, results: ResultValue[], sex: Sex): ResultValue[] {
+export function withCatalogDefaults(testCode: string, results: ResultValue[], sex: Sex, ageYears?: number | null): ResultValue[] {
   const test = getTestByCode(testCode);
   if (!test) return results;
   const byName = new Map(test.parameters.filter((p) => p.name).map((p) => [p.name!.trim().toLowerCase(), p]));
-  return results.map((r) => {
+  const entered = new Map(results.map((r) => [r.parameter.trim().toLowerCase(), r.value] as const));
+  const values: Record<string, string> = {};
+  for (const p of test.parameters) if (p.name && entered.has(p.name.trim().toLowerCase())) values[p.name] = entered.get(p.name.trim().toLowerCase())!;
+  const computed = computeCalculated(test, values, { sex: catalogSex(sex), ageYears: ageYears ?? undefined });
+  const extra: ResultValue[] = test.parameters
+    .filter((p) => p.name && p.name in computed && !entered.has(p.name.trim().toLowerCase()))
+    .map((p) => ({ parameter: p.name!, value: String(computed[p.name!]) }));
+  return [...results, ...extra].map((r) => {
     const p = byName.get(r.parameter.trim().toLowerCase());
     if (!p) return r;
     const out: ResultValue = { ...r };
@@ -66,7 +85,7 @@ export class ReportService {
       return out;
     }
     const patient = await this.repos.patients.get(report.patientId);
-    return saveResults(this.repos, report.id, withCatalogDefaults(report.testCode, results, patient?.sex ?? "other"), actor.userId);
+    return saveResults(this.repos, report.id, withCatalogDefaults(report.testCode, results, patient?.sex ?? "other", patientAge(patient)), actor.userId);
   }
 
   verify(actor: Actor, report: Report) {

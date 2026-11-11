@@ -1211,7 +1211,11 @@ type Mutation {
 
   """Closing vouchers on 31 March and a lock. fy: 2026-27."""
   closeFinancialYear(fy: String!): YearEndResult!
-  collectSample(id: ID!): Sample!
+
+  """
+  Marks the sample collected. barcode: the tube's own label, when it is not the generated one (unique in the organisation).
+  """
+  collectSample(barcode: String, id: ID!): Sample!
   createBooking(input: CreateBookingInput!): CreateBookingResult!
   createBranch(input: BranchInput!): Branch!
   createCustomer(input: CustomerInput!): Customer!
@@ -1272,6 +1276,11 @@ type Mutation {
   registerPatient(input: RegisterPatientInput!): Patient!
   rejectExternalReport(id: ID!, reason: String!): ExternalReport!
   rejectSample(id: ID!, reason: String!): Sample!
+
+  """
+  A new barcode for a sample that the lab has not received yet (BARCODE_TAKEN when another sample has it).
+  """
+  relabelSample(barcode: String!, id: ID!): Sample!
   releaseReport(id: ID!): Report!
 
   """

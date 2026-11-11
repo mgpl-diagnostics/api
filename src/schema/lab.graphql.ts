@@ -114,7 +114,10 @@ export const labTypeDefs = /* GraphQL */ `
 
     createBooking(input: CreateBookingInput!): CreateBookingResult!
     cancelBooking(id: ID!): Booking!
-    collectSample(id: ID!): Sample!
+    "Marks the sample collected. barcode: the tube's own label, when it is not the generated one (unique in the organisation)."
+    collectSample(id: ID!, barcode: String): Sample!
+    "A new barcode for a sample that the lab has not received yet (BARCODE_TAKEN when another sample has it)."
+    relabelSample(id: ID!, barcode: String!): Sample!
     receiveSample(id: ID!): Sample!
     rejectSample(id: ID!, reason: String!): Sample!
 

@@ -87,7 +87,8 @@ export const labController = withErrorCodes({
       const b = await ctx.services.bookings.get(actorOf(ctx), a.id);
       return ctx.services.bookings.cancel(authorize(ctx, "booking:cancel", b.branchId), a.id);
     },
-    collectSample: async (_: unknown, a: { id: string }, ctx: Ctx) => ctx.services.bookings.collectSample(actorOf(ctx), await sampleFor(ctx, a.id, "sample:collect")),
+    collectSample: async (_: unknown, a: { id: string; barcode?: string | null }, ctx: Ctx) => ctx.services.bookings.collectSample(actorOf(ctx), await sampleFor(ctx, a.id, "sample:collect"), a.barcode),
+    relabelSample: async (_: unknown, a: { id: string; barcode: string }, ctx: Ctx) => ctx.services.bookings.relabelSample(actorOf(ctx), await sampleFor(ctx, a.id, "sample:collect"), a.barcode),
     receiveSample: async (_: unknown, a: { id: string }, ctx: Ctx) => ctx.services.bookings.receiveSample(actorOf(ctx), await sampleFor(ctx, a.id, "sample:receive")),
     rejectSample: async (_: unknown, a: { id: string; reason: string }, ctx: Ctx) => ctx.services.bookings.rejectSample(actorOf(ctx), await sampleFor(ctx, a.id, "sample:reject"), a.reason),
 
