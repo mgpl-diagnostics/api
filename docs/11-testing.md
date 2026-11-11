@@ -65,3 +65,12 @@ or new field fails here before it reaches an app. Change the client first, relea
 
 Add checks to `suite()` in `test/run.ts` with `ok(condition, "[tag] what it proves")`. Use the `gql(token,
 query, variables)` helper and the seeded tokens (`owner`, `desk`, …). Keep fixtures fictional.
+
+## Print audit (every catalog test on paper)
+
+`npm run print-audit` renders every catalog test the way the api prints it (`withCatalogDefaults` +
+`DocumentService` sections + report-kit) and reads the PDFs back with report-reader. It reports render
+errors, missing or uncomputed results, ranges that are option lists or essays, text past the edge and
+colliding text. It takes about 8 minutes per 150 tests, so it is not part of `npm test`: run it after
+changes to catalog-kit, report-kit or the document service. `npm run print-audit -- 0 150` runs a range;
+`ONLY=CBC,WIDS` runs chosen codes; `KEEP=1` keeps the PDFs with findings in `print-audit/`.

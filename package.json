@@ -20,7 +20,8 @@
     "schema": "tsx scripts/print-schema.ts",
     "seed": "tsx scripts/seed.ts",
     "llms": "node scripts/llms-full.mjs @mgpl-diagnostics/api README.md AGENTS.md llms.txt docs package.json kits.json schema.graphql src scripts test",
-    "docs:reference": "tsx scripts/api-reference.ts"
+    "docs:reference": "tsx scripts/api-reference.ts",
+    "print-audit": "tsx scripts/print-audit.ts"
   },
   "dependencies": {
     "@graphql-tools/schema": "^11.0.8",
