@@ -8,6 +8,7 @@ import { AUTH_MODE_HEADER } from "./graphql/cookies";
 import { allowsLargeBody, costLimit, depthLimit, importBodyLimit } from "./graphql/limits";
 import { buildSchema } from "./graphql/schema";
 import { isDraining } from "./lifecycle";
+import { REQUEST_ID_HEADER, requestIdGenerator } from "./request-id";
 
 type ServerContext = { req: FastifyRequest; reply: FastifyReply };
 
@@ -43,7 +44,11 @@ function rules(introspection: boolean): Plugin {
  */
 export async function buildServer(container: Container): Promise<FastifyInstance> {
   const { config } = container;
-  const app = Fastify({ logger: config.env === "production" ? { level: "info" } : config.env === "test" ? false : { level: "warn" }, bodyLimit: Math.max(config.bodyLimit, importBodyLimit(config.imports.maxBytes)), trustProxy: (_addr: string, hop: number) => hop < config.trustedHops });
+  const app = Fastify({ logger: config.env === "production" ? { level: "info" } : config.env === "test" ? false : { level: "warn" }, bodyLimit: Math.max(config.bodyLimit, importBodyLimit(config.imports.maxBytes)), trustProxy: (_addr: string, hop: number) => hop < config.trustedHops, genReqId: requestIdGenerator(config.trustedHops) });
+
+  // request ids: a UUIDv7 per request (or the trusted proxy's X-Request-ID, src/request-id.ts). Fastify logs it as
+  // reqId, Yoga reuses it (it prefers req.id) for its own logs, and every response, /health and 413s too, echoes it.
+  app.addHook("onRequest", async (req, reply) => void reply.header(REQUEST_ID_HEADER, req.id));
 
   // security-kit: security headers on every response, and request.security = { ip, userAgent, … } with the
   // client IP taken from X-Forwarded-For only through the configured number of proxies (TRUST_PROXY).
