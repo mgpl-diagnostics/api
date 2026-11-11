@@ -14,6 +14,8 @@ import { parse, validate } from "graphql";
 import { Redis } from "ioredis";
 import { QueryTypes, Sequelize } from "sequelize";
 import { loadConfig } from "../src/config/env";
+import { withCatalogDefaults } from "../src/services/report.service";
+import { TESTS } from "@mgpl-diagnostics/catalog-kit";
 import { buildSchema } from "../src/graphql/schema";
 import { createContainer } from "../src/container";
 import { buildServer } from "../src/server";
@@ -172,6 +174,9 @@ async function suite(db: Db, tag: string) {
     const lhtml = (await gql(owner, "query($b: ID!) { bookingReportDocument(bookingId: $b, format: html) { html } }", { b: lft.booking.id })).data?.bookingReportDocument.html ?? "";
     ok(/DIAZO/i.test(lhtml) && /GLOBULIN/.test(lhtml), `[${tag}] the printed report carries each parameter's method and the calculated rows`);
     ok(/TUBE-0001/.test(lhtml), `[${tag}] the report's Sample ID is the tube barcode, not the booking number`);
+    // every catalog test can be saved: unnamed narrative blocks once crashed saveResults ("reading 'trim'")
+    const broken = TESTS.filter((t) => { try { withCatalogDefaults(t.code ?? "", t.parameters.filter((x) => x.name).map((x) => ({ parameter: x.name!, value: "1" })), "male", 30); return false; } catch { return true; } });
+    ok(broken.length === 0, `[${tag}] results for all ${TESTS.length} catalog tests save without errors${broken.length ? ` (failed: ${broken.slice(0, 5).map((t) => t.code).join(", ")})` : ""}`);
     // names, Widal titres → RESULT, narratives print as notes and are never stored as results
     const jp = await gql(owner, "mutation($i: RegisterPatientInput!) { registerPatient(input: $i) { id name } }", { i: { branchId: a.branch.id, name: "  jyoti   koshariya ", sex: "female", ageYears: 20 } });
     ok(jp.data?.registerPatient.name === "Jyoti Koshariya", `[${tag}] names are saved with capitals ("${jp.data?.registerPatient.name}")`);

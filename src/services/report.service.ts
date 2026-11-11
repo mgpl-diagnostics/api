@@ -33,7 +33,7 @@ export function withCatalogDefaults(testCode: string, results: ResultValue[], se
     .filter((p) => p.name && p.name in computed && !entered.has(p.name.trim().toLowerCase()))
     .map((p) => ({ parameter: p.name!, value: String(computed[p.name!]) }));
   // narrative blocks (interpretation, clinical significance…) print from the catalog, never as results
-  const narrative = new Set(test.parameters.filter(isNarrative).map((p) => p.name!.trim().toLowerCase()));
+  const narrative = new Set(test.parameters.filter((p) => p.name && isNarrative(p)).map((p) => p.name!.trim().toLowerCase()));
   return [...results, ...extra].filter((r) => !narrative.has(r.parameter.trim().toLowerCase())).map((r) => {
     const p = byName.get(r.parameter.trim().toLowerCase());
     if (!p) return r;
