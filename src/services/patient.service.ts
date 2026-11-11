@@ -1,6 +1,6 @@
 import { registerPatient, type Address, type Doctor, type Id, type Patient, type Repositories, type Sex } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
-import { clean, mustOwn, owned } from "./util";
+import { clean, mustOwn, owned, properName } from "./util";
 
 export interface RegisterPatientInput {
   branchId: Id;
@@ -36,12 +36,12 @@ export class PatientService {
 
   async register(actor: Actor, input: RegisterPatientInput) {
     mustOwn(await this.repos.branches.get(input.branchId), actor.orgId, "Branch", input.branchId);
-    return registerPatient(this.repos, { ...(clean(input) as RegisterPatientInput), orgId: actor.orgId } as never, actor.userId);
+    return registerPatient(this.repos, { ...(clean({ ...input, name: properName(input.name) }) as RegisterPatientInput), orgId: actor.orgId } as never, actor.userId);
   }
 
   async update(actor: Actor, id: Id, patch: Partial<Omit<RegisterPatientInput, "branchId">>) {
     mustOwn(await this.repos.patients.get(id), actor.orgId, "Patient", id);
-    const p = await this.repos.patients.update(id, clean(patch) as never);
+    const p = await this.repos.patients.update(id, clean(patch.name != null ? { ...patch, name: properName(patch.name) } : patch) as never);
     await this.repos.audit.log({ orgId: actor.orgId, userId: actor.userId, action: "patient.update", entity: "patient", entityId: id });
     return p!;
   }
@@ -51,11 +51,11 @@ export class PatientService {
   }
 
   async createDoctor(actor: Actor, input: DoctorInput) {
-    return this.repos.doctors.create({ ...(clean(input) as DoctorInput), orgId: actor.orgId, active: input.active ?? true } as never);
+    return this.repos.doctors.create({ ...(clean({ ...input, name: properName(input.name) }) as DoctorInput), orgId: actor.orgId, active: input.active ?? true } as never);
   }
 
   async updateDoctor(actor: Actor, id: Id, patch: Partial<DoctorInput>) {
     mustOwn(await this.repos.doctors.get(id), actor.orgId, "Doctor", id);
-    return (await this.repos.doctors.update(id, clean(patch) as never))!;
+    return (await this.repos.doctors.update(id, clean(patch.name != null ? { ...patch, name: properName(patch.name) } : patch) as never))!;
   }
 }

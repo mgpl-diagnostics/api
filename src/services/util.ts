@@ -37,3 +37,14 @@ export async function scopedFind<T extends { id: Id }>(
   const key = (x: T) => +((x as Record<string, unknown>)[sortField] as Date);
   return lists.flat().sort((a, b) => key(b) - key(a)).slice(offset, offset + limit);
 }
+
+/**
+ * A person's name as people write it: the first letter of every word upper case ("jyoti kosha-riya" →
+ * "Jyoti Kosha-Riya"), the rest kept as typed ("McDonald", "D'Souza" stay), spaces collapsed.
+ */
+export function properName(raw: string): string {
+  return raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/(^|[\s\-'.(])(\p{Ll})/gu, (_, sep: string, ch: string) => sep + ch.toLocaleUpperCase("en-IN"));
+}
