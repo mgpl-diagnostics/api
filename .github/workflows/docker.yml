@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   docker:
-    uses: mgpl-diagnostics/.github/.github/workflows/docker-build.yml@claude/project-thread-dsh6g4
+    uses: mgpl-diagnostics/.github/.github/workflows/docker-build.yml@main
     with:
       # loads every kit the api imports (report-kit's native resvg included) from the pruned node_modules
       smoke: >-
