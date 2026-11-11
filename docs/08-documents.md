@@ -59,6 +59,13 @@ The stored invoice (paise) is mapped to invoice-kit's print shape (rupees). invo
 totals; the API checks that its total equals the stored total and refuses a mismatch (`CONFLICT`), so a
 printed invoice can never disagree with the books.
 
+## The QR code
+
+With patient links on (`PATIENT_LINK_SECRET` and `PATIENT_LINK_BASE_URL`), the QR on a printed report and on
+every bill of a booking opens the patient's page for that booking ([21-patient-links.md](21-patient-links.md)).
+Printing again prints the same link. Without them, the QR keeps its old summary. A bill's UPI pay QR (when the
+lab sets `MGPL_UPI_ID`) is separate and unchanged.
+
 ## Ad-hoc rendering
 
 `renderReport(request)` and `renderInvoice(request)` take the same JSON as report-kit's and invoice-kit's

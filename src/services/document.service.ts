@@ -1,7 +1,7 @@
 import { getTestByCode, isNarrative } from "@mgpl-diagnostics/catalog-kit";
 import {
   ConflictError, NotFoundError, ValidationError,
-  type Id, type Invoice as DbInvoice, type Patient as DbPatient, type PaymentMode, type Report as DbReport, type Repositories,
+  type Booking as DbBooking, type Id, type Invoice as DbInvoice, type PatientLink, type Patient as DbPatient, type PaymentMode, type Report as DbReport, type Repositories,
 } from "@mgpl-diagnostics/db-kit";
 import {
   computeInvoice, INVOICE_SAMPLES, invoiceFromRequest, invoiceTotalsJson, PRICE_LIST, renderInvoiceHtml, renderInvoicePdf,
@@ -12,7 +12,11 @@ import {
   type LabProfile, type Patient as PrintPatient, type Report as PrintReport, type ReportDesign, type ReportRequest, type ReportTestProvenance, type ReportVariant, type Row, type Section, type TestRow,
 } from "@mgpl-diagnostics/report-kit";
 import type { Actor } from "../graphql/context";
+
+/** Who prints: the organisation, and the user when there is one (a patient's own copy has none). */
+type Owner = Pick<Actor, "orgId"> & { userId?: Id | null };
 import { printedProvenance } from "./import.service";
+import type { PatientLinkService } from "./patient-link.service";
 import { mustOwn, properName } from "./util";
 
 export type DocumentFormat = "pdf" | "html";
@@ -62,10 +66,18 @@ export function printPatient(p: DbPatient, at: Date, extra: Partial<PrintPatient
 export class DocumentService {
   private readonly lab: LabProfile;
   private readonly samples: boolean;
+  private readonly links: PatientLinkService | null;
 
-  constructor(private readonly repos: Repositories, opts: { lab?: LabProfile; samples: boolean }) {
+  constructor(private readonly repos: Repositories, opts: { lab?: LabProfile; samples: boolean; links?: PatientLinkService }) {
     this.lab = opts.lab ?? defaultLab();
     this.samples = opts.samples;
+    this.links = opts.links ?? null;
+  }
+
+  /** The booking's patient link for the printed QR (created on first print), or undefined when links are off. */
+  private async linkOf(orgId: Id, booking: DbBooking | null, createdBy: Id | null): Promise<string | undefined> {
+    if (!this.links?.enabled || !booking) return undefined;
+    return (await this.links.linkFor(orgId, booking, createdBy))?.url;
   }
 
   // ---------------------------------------------------------------- catalogs
@@ -109,7 +121,7 @@ export class DocumentService {
   // ---------------------------------------------------------------- from stored data
 
   /** The printed form of a stored invoice (with its payments). */
-  async storedInvoice(actor: Actor, invoice: DbInvoice): Promise<PrintInvoice> {
+  async storedInvoice(actor: Owner, invoice: DbInvoice): Promise<PrintInvoice> {
     const patient = mustOwn(await this.repos.patients.get(invoice.patientId), actor.orgId, "Patient", invoice.patientId);
     const payments = await this.repos.payments.find({ invoiceId: invoice.id }, { sort: { field: "receivedAt" } });
     const at = invoice.issuedAt ?? invoice.createdAt;
@@ -124,7 +136,10 @@ export class DocumentService {
     }));
     // refunds print as their own rows in the payments table (invoice-kit ≥ 2.1), not as a note
     const notes = [invoice.status === "cancelled" ? `CANCELLED: ${invoice.cancelReason ?? ""}`.trim() : ""].filter(Boolean);
+    // the QR opens the patient's page (this booking's bill and reports) when patient links are on
+    const qrValue = invoice.bookingId && invoice.status !== "cancelled" ? await this.linkOf(actor.orgId, await this.repos.bookings.get(invoice.bookingId), actor.userId ?? null) : undefined;
     return {
+      ...(qrValue ? { qrValue, qrLabel: "Scan for your reports and bill" } : {}),
       invoiceNo: invoice.invoiceNo,
       date: at,
       patient: printPatient(patient, at, sampleId ? { sampleId } : {}),
@@ -138,7 +153,7 @@ export class DocumentService {
     };
   }
 
-  async renderStoredInvoice(actor: Actor, invoice: DbInvoice, o: RenderOptions) {
+  async renderStoredInvoice(actor: Owner, invoice: DbInvoice, o: RenderOptions) {
     const printed = await this.storedInvoice(actor, invoice);
     // the printed total must equal the stored one (both are integer-paise maths with the same rules)
     const t = computeInvoice(printed);
@@ -146,15 +161,29 @@ export class DocumentService {
     return this.renderInvoice(printed, { ...o, fileName: o.fileName ?? `${invoice.invoiceNo.replaceAll("/", "-")}.${o.format}` });
   }
 
+  /** The patient's copy of one of the link's bills (issued or paid, never a draft or cancelled one). */
+  async patientInvoice(link: PatientLink, invoiceId: Id) {
+    const inv = await this.repos.invoices.get(invoiceId);
+    if (!inv || inv.orgId !== link.orgId || inv.bookingId !== link.bookingId || inv.status === "draft" || inv.status === "cancelled") throw new NotFoundError("Invoice", invoiceId);
+    return this.renderStoredInvoice({ orgId: link.orgId, userId: null }, inv, { format: "pdf", variant: "header", design: "sidebar" });
+  }
+
+  /** The patient's copy of the link's released reports, printed together. */
+  async patientReports(link: PatientLink) {
+    return this.renderBookingReports({ orgId: link.orgId, userId: null }, link.bookingId, null, { format: "pdf", variant: "header", design: "sidebar", releasedOnly: true });
+  }
+
   /**
    * A booking's reports as one printed report. Only verified or released reports print. A report
    * whose test code is a report-kit template uses that template (results keyed by its field keys);
    * any other test prints as a standard Test | Result | Unit | Range table.
    */
-  async renderBookingReports(actor: Actor, bookingId: Id, reportIds: Id[] | null, o: RenderOptions) {
+  async renderBookingReports(actor: Owner, bookingId: Id, reportIds: Id[] | null, o: RenderOptions & { releasedOnly?: boolean }) {
     const booking = mustOwn(await this.repos.bookings.get(bookingId), actor.orgId, "Booking", bookingId);
     let reports = await this.repos.reports.find({ bookingId });
     if (reportIds?.length) reports = reports.filter((r) => reportIds.includes(r.id));
+    // the patient's page gives out released reports only
+    if (o.releasedOnly) reports = reports.filter((r) => r.status === "released");
     if (!reports.length) throw new NotFoundError("Report", reportIds?.join(",") ?? bookingId);
     const unready = reports.find((r) => r.status !== "verified" && r.status !== "released");
     if (unready) throw new ConflictError(`Report ${unready.testName} is ${unready.status}; verify it before printing`);
@@ -175,7 +204,8 @@ export class DocumentService {
       if (provenance && own.length) own[own.length - 1] = { ...own[own.length - 1]!, provenance };
       sections.push(...own);
     }
-    const report: PrintReport = { patient: printed, sections };
+    const qrValue = await this.linkOf(actor.orgId, booking, actor.userId ?? null);
+    const report: PrintReport = { patient: printed, sections, ...(qrValue ? { qrValue } : {}) };
     return this.renderReport(report, { ...o, fileName: o.fileName ?? `${booking.bookingNo}-${o.variant}.${o.format}` });
   }
 

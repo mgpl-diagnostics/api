@@ -77,6 +77,12 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
     });
   }
 
+  // patient page calls per IP, shared by every replica through Redis
+  const window = { limit: config.patientLinks.perIp, windowMs: 10 * 60_000 };
+  const patientLinkLimiter = db.redis
+    ? (await import("@mgpl-diagnostics/auth-kit/redis")).redisRateLimiter(db.redis, { ...window, prefix: "mgpl:patient-link:rl:" })
+    : memoryRateLimiter(window);
+
   const lab = o.lab ?? defaultLab();
   const mailer = o.mailer ?? mailerFromConfig(config, lab);
   let jobDeps: JobDeps | undefined;
@@ -85,7 +91,7 @@ export async function createContainer(o: ContainerOptions): Promise<Container> {
     (config.redisUrl
       ? createBullJobQueue({ redisUrl: config.redisUrl, prefix: config.jobs.prefix, keepResultsMs: config.jobs.keepResultsMs })
       : createInlineJobQueue(() => jobDeps!, { keepResultsMs: config.jobs.keepResultsMs }));
-  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs, imports: config.imports, updates: config.updates, fetch: o.fetch });
+  const services = createServices({ repos: db.repos, auth, mailer, resetUrl: config.resetUrl, lab, samples: config.samples, jobs: () => jobs, imports: config.imports, patientLinks: config.patientLinks, patientLinkLimiter, updates: config.updates, fetch: o.fetch });
   jobDeps = { repos: db.repos, auth, services };
   return {
     config,

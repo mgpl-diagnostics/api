@@ -1,0 +1,24 @@
+# Patient links (docs/21-patient-links.md). Variables: $bookingId (staff), $token (public, from the URL), $invoiceId.
+
+query BookingPatientLink($bookingId: ID!) {
+  patientLink(bookingId: $bookingId) { url expiresAt }
+}
+
+mutation StopPatientLinks($bookingId: ID!) {
+  revokePatientLinks(bookingId: $bookingId)
+}
+
+# No sign-in: the token is the key. Null when the link does not open.
+query PatientPage($token: String!) {
+  patientPage(token: $token) {
+    labName patientName bookingNo bookedAt
+    branch { name phone address }
+    invoices { id invoiceNo issuedAt totalPaise paidPaise duePaise status }
+    reports { id testName releasedAt }
+    pending expiresAt
+  }
+}
+
+query PatientBill($token: String!, $invoiceId: ID!) {
+  patientDocument(token: $token, kind: invoice, invoiceId: $invoiceId) { fileName mimeType base64 }
+}

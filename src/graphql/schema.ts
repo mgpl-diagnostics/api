@@ -10,6 +10,7 @@ import { financeController } from "../controllers/finance.controller";
 import { importsController } from "../controllers/imports.controller";
 import { labController } from "../controllers/lab.controller";
 import { organizationController } from "../controllers/organization.controller";
+import { patientLinksController } from "../controllers/patient-links.controller";
 import { systemController } from "../controllers/system.controller";
 import { authTypeDefs } from "../schema/auth.graphql";
 import { baseTypeDefs } from "../schema/base.graphql";
@@ -21,6 +22,7 @@ import { financeTypeDefs } from "../schema/finance.graphql";
 import { importsTypeDefs } from "../schema/imports.graphql";
 import { labTypeDefs } from "../schema/lab.graphql";
 import { organizationTypeDefs } from "../schema/organization.graphql";
+import { patientLinksTypeDefs } from "../schema/patient-links.graphql";
 import { systemTypeDefs } from "../schema/system.graphql";
 
 /** One domain = one SDL file in src/schema + one controller in src/controllers. */
@@ -41,6 +43,7 @@ export const MODULES: GraphQLModule[] = [
   { name: "finance", typeDefs: financeTypeDefs, resolvers: financeController },
   { name: "documents", typeDefs: documentsTypeDefs, resolvers: documentsController },
   { name: "imports", typeDefs: importsTypeDefs, resolvers: importsController },
+  { name: "patientLinks", typeDefs: patientLinksTypeDefs, resolvers: patientLinksController },
   { name: "system", typeDefs: systemTypeDefs, resolvers: systemController },
 ];
 

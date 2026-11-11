@@ -33,6 +33,10 @@ variables already set in the real environment win over the file.
 | `IMPORT_MAX_BYTES` | `15728640` (15 MiB) | Largest partner-lab PDF ([18](18-imports.md)) |
 | `IMPORT_INLINE_MAX_BYTES` | `5242880` (5 MiB) | Larger partner PDFs are read by the worker when Redis is configured |
 | `IMPORT_WAIT_MS` | `60000` | How long `importExternalReport` waits for the worker |
+| `PATIENT_LINK_SECRET` | empty (off) | 32+ characters: HMAC key for patient link tokens ([21](21-patient-links.md)). Links are on only with `PATIENT_LINK_BASE_URL` too |
+| `PATIENT_LINK_BASE_URL` | empty (off) | The public page the token is appended to, e.g. `https://dashboard.example.in/r/` (https) |
+| `PATIENT_LINK_DAYS` | `180` | How long a patient link works |
+| `PATIENT_LINK_PER_IP` | `60` | Patient page calls per IP per 10 minutes |
 | `TRUST_PROXY` | `false` | How many proxies in front of the API append to `X-Forwarded-For`: `true` = 1 (a load balancer), `2` for CDN + load balancer. Login limits and sessions then see the client IP; entries left of the trusted proxies (which any client can send) are ignored. Through a trusted proxy, its `X-Request-ID` (when well-formed) becomes the request id; otherwise each request gets a UUIDv7, sent back in `x-request-id` and logged as `reqId` |
 | `TLS_FINGERPRINT_HEADER` | empty (off) | Header the TLS-terminating proxy sets to the client's JA4 (or JA3) TLS fingerprint, e.g. `x-ja4`. Read only through `TRUST_PROXY` proxies (refused at startup without one); stored hashed on the session, a change audited ([06-auth-and-permissions.md](06-auth-and-permissions.md#tls-fingerprint)) |
 | `MGPL_SAMPLES` | on in development | Demo report/invoice samples in `documents` |

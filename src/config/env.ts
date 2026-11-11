@@ -53,6 +53,13 @@ export interface Config {
   deviceBinding: "enforce" | "flag" | "off";
   /** Partner-lab PDF imports: largest file accepted, largest extracted in the request (larger go to the worker), how long a request waits for the worker. */
   imports: { maxBytes: number; inlineMaxBytes: number; waitMs: number };
+  /**
+   * Patient links: the QR on reports and bills opens a read-only page with that booking's bill and released
+   * reports. Off unless both `PATIENT_LINK_SECRET` (32+ characters, HMAC key for the tokens) and
+   * `PATIENT_LINK_BASE_URL` (the dashboard's public page, e.g. https://dashboard.example.com/r/) are set.
+   * `ttlDays` (PATIENT_LINK_DAYS) is how long a link works; `perIp` caps patient page calls per IP per 10 minutes.
+   */
+  patientLinks: { secret: string | null; baseUrl: string | null; ttlDays: number; perIp: number };
   /** Background jobs (BullMQ on REDIS_URL): key prefix and how many jobs a worker runs at once. */
   jobs: { prefix: string; concurrency: number; keepResultsMs: number };
   /**
@@ -202,6 +209,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       generated: !secrets.length,
     },
     deviceBinding,
+    patientLinks: patientLinksConfig(env),
     imports: { maxBytes: int(env.IMPORT_MAX_BYTES, 15 * 1024 * 1024), inlineMaxBytes: int(env.IMPORT_INLINE_MAX_BYTES, 5 * 1024 * 1024), waitMs: int(env.IMPORT_WAIT_MS, 60_000) },
     jobs: { prefix: env.QUEUE_PREFIX || "mgpl", concurrency: Math.max(1, int(env.WORKER_CONCURRENCY, 4)), keepResultsMs: int(env.JOB_RESULT_TTL_MS, 3600_000) },
     smtp: smtpUrl ? { url: smtpUrl, from: env.MAIL_FROM || "MGPL Diagnostics <no-reply@localhost.localdomain>" } : null,
@@ -209,4 +217,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     shutdown: { drainMs: int(env.SHUTDOWN_DRAIN_MS, mode === "production" ? 5_000 : 0), timeoutMs: int(env.SHUTDOWN_TIMEOUT_MS, 30_000) },
     updates: updatesConfig(env, mode),
   };
+}
+
+function patientLinksConfig(env: Record<string, string | undefined>): Config["patientLinks"] {
+  const secret = env.PATIENT_LINK_SECRET?.trim() || null;
+  if (secret && secret.length < 32) throw new Error("PATIENT_LINK_SECRET needs at least 32 characters");
+  let baseUrl = env.PATIENT_LINK_BASE_URL?.trim() || null;
+  if (baseUrl) {
+    let u: URL;
+    try {
+      u = new URL(baseUrl);
+    } catch {
+      throw new Error("PATIENT_LINK_BASE_URL is not a URL");
+    }
+    if (u.protocol !== "https:" && u.hostname !== "localhost" && u.hostname !== "127.0.0.1") throw new Error("PATIENT_LINK_BASE_URL must be https");
+    if (u.search || u.hash) throw new Error("PATIENT_LINK_BASE_URL must not have a query or a fragment");
+    if (!baseUrl.endsWith("/")) baseUrl += "/";
+  }
+  return { secret, baseUrl, ttlDays: Math.max(1, int(env.PATIENT_LINK_DAYS, 180)), perIp: Math.max(1, int(env.PATIENT_LINK_PER_IP, 60)) };
 }

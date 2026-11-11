@@ -5,6 +5,7 @@ import { HttpError } from "@mgpl-diagnostics/report-kit";
 import { GraphQLError } from "graphql";
 import { BookingPatientMismatchError, FileTooLargeError, ReportAlreadyAppliedError, UnsupportedReportError } from "../services/import.service";
 import { BarcodeTakenError } from "../services/booking.service";
+import { PatientLinkRateLimitError } from "../services/patient-link.service";
 import { ForbiddenError } from "../services/util";
 
 /**
@@ -44,6 +45,7 @@ export function toGraphQLError(e: unknown): unknown {
     if (e.details.organizations?.length) extra.organizations = e.details.organizations.map((o) => ({ code: o.code, name: o.name }));
     return apiError(e.code as ErrorCode, e.message, e.statusCode, extra);
   }
+  if (e instanceof PatientLinkRateLimitError) return apiError("RATE_LIMITED", e.message, 429, { retryAfterMs: e.retryAfterMs });
   if (e instanceof ForbiddenError) return apiError("FORBIDDEN", e.message, 403);
   if (e instanceof UnsupportedReportError) return apiError("UNSUPPORTED_REPORT", e.message, 422);
   if (e instanceof FileTooLargeError) return apiError("FILE_TOO_LARGE", e.message, 413, { maxBytes: e.maxBytes });
