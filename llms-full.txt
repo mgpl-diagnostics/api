@@ -2976,7 +2976,7 @@ flowchart TD
     },
     {
       "name": "catalog-kit",
-      "ref": "v1.1.0"
+      "ref": "v1.2.0"
     },
     {
       "name": "report-reader",
@@ -2992,7 +2992,7 @@ flowchart TD
     },
     {
       "name": "report-kit",
-      "ref": "v2.1.0"
+      "ref": "v2.2.0"
     },
     {
       "name": "ledger-kit",
@@ -3000,7 +3000,7 @@ flowchart TD
     },
     {
       "name": "client",
-      "ref": "v1.8.0"
+      "ref": "v1.9.0"
     },
     {
       "name": "invoice-kit",
@@ -3064,7 +3064,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/api",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "MGPL Diagnostics backend: one GraphQL endpoint (GraphQL Yoga on Fastify) over the kits (auth, db, catalog, report, invoice, finance, tally) used as internal libraries, plus a BullMQ worker on Redis.",
   "type": "module",
@@ -3089,13 +3089,13 @@ Key facts for agents:
   "dependencies": {
     "@graphql-tools/schema": "^11.0.8",
     "@mgpl-diagnostics/auth-kit": "^1.5.0",
-    "@mgpl-diagnostics/catalog-kit": "^1.1.0",
+    "@mgpl-diagnostics/catalog-kit": "^1.2.0",
     "@mgpl-diagnostics/db-kit": "^2.1.1",
     "@mgpl-diagnostics/finance-kit": "^1.0.1",
     "@mgpl-diagnostics/invoice-kit": "^2.1.0",
     "@mgpl-diagnostics/ledger-kit": "^0.1.0",
     "@mgpl-diagnostics/mail-kit": "^0.1.0",
-    "@mgpl-diagnostics/report-kit": "^2.1.0",
+    "@mgpl-diagnostics/report-kit": "^2.2.0",
     "@mgpl-diagnostics/report-reader": "^0.1.0",
     "@mgpl-diagnostics/security-kit": "^0.3.0",
     "bullmq": "^6.7.1",
@@ -3111,7 +3111,7 @@ Key facts for agents:
     "sequelize": "^6.37.8"
   },
   "devDependencies": {
-    "@mgpl-diagnostics/client": "^1.8.0",
+    "@mgpl-diagnostics/client": "^1.9.0",
     "@types/node": "^22.20.5",
     "embedded-postgres": "^18.4.0-beta.17",
     "ioredis-mock": "^8.13.1",
@@ -3440,6 +3440,11 @@ type CatalogParameter {
   male: CatalogInterval
   method: String
   name: String
+
+  """
+  An interpretation / clinical significance / note block: printed under the test, never entered as a result.
+  """
+  narrative: Boolean!
   options: [String!]
 
   """The printed range for a sex (or both)."""
@@ -6290,7 +6295,7 @@ export const booksController = withErrorCodes({
 ## File: src/controllers/catalog.controller.ts
 
 ```ts
-import type { Interval, LabTest, Parameter } from "@mgpl-diagnostics/catalog-kit";
+import { isNarrative, type Interval, type LabTest, type Parameter } from "@mgpl-diagnostics/catalog-kit";
 import type { RequestContext as Ctx } from "../graphql/context";
 import { withErrorCodes } from "../graphql/errors";
 import { cap } from "../graphql/guards";
@@ -6320,6 +6325,7 @@ export const catalogController = withErrorCodes({
     male: (p: Parameter) => (p.male ? { low: bound(p.male.low), high: bound(p.male.high) } : null),
     female: (p: Parameter) => (p.female ? { low: bound(p.female.low), high: bound(p.female.high) } : null),
     range: (p: Parameter, a: { sex?: "male" | "female" | "other" | null }, ctx: Ctx) => ctx.services.catalog.formatRange(p, a.sex === "other" ? null : a.sex),
+    narrative: (p: Parameter) => isNarrative(p),
   },
 });
 ```
@@ -8510,6 +8516,8 @@ export const catalogTypeDefs = /* GraphQL */ `
     referenceText: String
     "The printed range for a sex (or both)."
     range(sex: Sex): String!
+    "An interpretation / clinical significance / note block: printed under the test, never entered as a result."
+    narrative: Boolean!
   }
 
   type CatalogTest {
@@ -10281,7 +10289,7 @@ export class CatalogService {
 ## File: src/services/document.service.ts
 
 ```ts
-import { getTestByCode } from "@mgpl-diagnostics/catalog-kit";
+import { getTestByCode, isNarrative } from "@mgpl-diagnostics/catalog-kit";
 import {
   ConflictError, NotFoundError, ValidationError,
   type Id, type Invoice as DbInvoice, type Patient as DbPatient, type PaymentMode, type Report as DbReport, type Repositories,
@@ -10292,11 +10300,11 @@ import {
 } from "@mgpl-diagnostics/invoice-kit";
 import {
   buildReport, COLS_STD, defaultLab, renderLetterheadHtml, renderLetterheadPdf, renderReportHtml, renderReportPdf, reportFromRequest, SAMPLES, templateCatalog, TEMPLATES,
-  type LabProfile, type Patient as PrintPatient, type Report as PrintReport, type ReportDesign, type ReportRequest, type ReportTestProvenance, type ReportVariant, type Section, type TestRow,
+  type LabProfile, type Patient as PrintPatient, type Report as PrintReport, type ReportDesign, type ReportRequest, type ReportTestProvenance, type ReportVariant, type Row, type Section, type TestRow,
 } from "@mgpl-diagnostics/report-kit";
 import type { Actor } from "../graphql/context";
 import { printedProvenance } from "./import.service";
-import { mustOwn } from "./util";
+import { mustOwn, properName } from "./util";
 
 export type DocumentFormat = "pdf" | "html";
 
@@ -10333,7 +10341,7 @@ function ageOf(p: DbPatient, at: Date): number | string {
 /** db-kit patient → the printed patient block. */
 export function printPatient(p: DbPatient, at: Date, extra: Partial<PrintPatient> = {}): PrintPatient {
   return {
-    title: p.title, name: p.name, age: ageOf(p, at), sex: titleCase(p.sex), patientId: p.uhid, phone: p.phone,
+    title: p.title, name: properName(p.name), age: ageOf(p, at), sex: titleCase(p.sex), patientId: p.uhid, phone: p.phone,
     address: [p.address?.line1, p.address?.city].filter(Boolean).join(", ") || undefined, ...extra,
   };
 }
@@ -10447,7 +10455,8 @@ export class DocumentService {
     const collected = samples.map((s) => s.collectedAt).filter(Boolean).sort()[0] ?? booking.createdAt;
     const reportedAt = reports.map((r) => r.verifiedAt ?? r.updatedAt).filter(Boolean).sort().at(-1) ?? new Date();
     const printed = printPatient(patient, reportedAt, {
-      refDoctor: doctor?.name ?? "Self", sampleId: booking.bookingNo, sampleCollectionDate: collected, collectedAt: collected, registeredAt: booking.createdAt, reportedAt,
+      // the tubes' barcodes (one per sample type); the booking number is not a sample id
+      refDoctor: doctor?.name ?? "Self", sampleId: samples.filter((s) => s.status !== "rejected").map((s) => s.barcode).join(", ") || booking.bookingNo, sampleCollectionDate: collected, collectedAt: collected, registeredAt: booking.createdAt, reportedAt,
     });
     const sections: Section[] = [];
     for (const r of reports) {
@@ -10515,10 +10524,16 @@ export class DocumentService {
       subtitle: r.testName,
       specimen: cat?.sampleType ?? undefined,
       columns: COLS_STD,
-      rows: r.results.map((x): TestRow => {
-        const method = methodOf.get(norm(x.parameter));
-        return { kind: "test", name: x.parameter, result: x.value, unit: x.unit, range: x.range, flag: flag(x.flag), ...(method ? { method } : {}) };
-      }),
+      rows: [
+        ...r.results.map((x): TestRow => {
+          const method = methodOf.get(norm(x.parameter));
+          return { kind: "test", name: x.parameter, result: x.value, unit: x.unit, range: x.range, flag: flag(x.flag), ...(method ? { method } : {}) };
+        }),
+        // the test's interpretation / clinical significance / notes, as the lab prints them, small, under the table
+        ...(cat?.parameters ?? []).filter(isNarrative).map((p, k): Row => ({
+          kind: "text", spaceBefore: k === 0 ? 4 : 0, content: { text: (p.referenceText ?? "").trim(), size: 7, color: "#5A6478" },
+        })),
+      ],
     }];
   }
 
@@ -11349,7 +11364,7 @@ export class OrganizationService {
 ```ts
 import { registerPatient, type Address, type Doctor, type Id, type Patient, type Repositories, type Sex } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
-import { clean, mustOwn, owned } from "./util";
+import { clean, mustOwn, owned, properName } from "./util";
 
 export interface RegisterPatientInput {
   branchId: Id;
@@ -11385,12 +11400,12 @@ export class PatientService {
 
   async register(actor: Actor, input: RegisterPatientInput) {
     mustOwn(await this.repos.branches.get(input.branchId), actor.orgId, "Branch", input.branchId);
-    return registerPatient(this.repos, { ...(clean(input) as RegisterPatientInput), orgId: actor.orgId } as never, actor.userId);
+    return registerPatient(this.repos, { ...(clean({ ...input, name: properName(input.name) }) as RegisterPatientInput), orgId: actor.orgId } as never, actor.userId);
   }
 
   async update(actor: Actor, id: Id, patch: Partial<Omit<RegisterPatientInput, "branchId">>) {
     mustOwn(await this.repos.patients.get(id), actor.orgId, "Patient", id);
-    const p = await this.repos.patients.update(id, clean(patch) as never);
+    const p = await this.repos.patients.update(id, clean(patch.name != null ? { ...patch, name: properName(patch.name) } : patch) as never);
     await this.repos.audit.log({ orgId: actor.orgId, userId: actor.userId, action: "patient.update", entity: "patient", entityId: id });
     return p!;
   }
@@ -11400,12 +11415,12 @@ export class PatientService {
   }
 
   async createDoctor(actor: Actor, input: DoctorInput) {
-    return this.repos.doctors.create({ ...(clean(input) as DoctorInput), orgId: actor.orgId, active: input.active ?? true } as never);
+    return this.repos.doctors.create({ ...(clean({ ...input, name: properName(input.name) }) as DoctorInput), orgId: actor.orgId, active: input.active ?? true } as never);
   }
 
   async updateDoctor(actor: Actor, id: Id, patch: Partial<DoctorInput>) {
     mustOwn(await this.repos.doctors.get(id), actor.orgId, "Doctor", id);
-    return (await this.repos.doctors.update(id, clean(patch) as never))!;
+    return (await this.repos.doctors.update(id, clean(patch.name != null ? { ...patch, name: properName(patch.name) } : patch) as never))!;
   }
 }
 ```
@@ -11535,7 +11550,7 @@ export class ReceivablesService {
 ## File: src/services/report.service.ts
 
 ```ts
-import { computeCalculated, flagResult, formatRange, getTestByCode, type Sex as CatalogSex } from "@mgpl-diagnostics/catalog-kit";
+import { computeCalculated, flagResult, formatRange, getTestByCode, isNarrative, type Sex as CatalogSex } from "@mgpl-diagnostics/catalog-kit";
 import { ConflictError, saveResults, transitionReport, ValidationError, type Booking, type Id, type Report, type Repositories, type ResultValue, type Sex } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
 import { mustOwn } from "./util";
@@ -11569,7 +11584,9 @@ export function withCatalogDefaults(testCode: string, results: ResultValue[], se
   const extra: ResultValue[] = test.parameters
     .filter((p) => p.name && p.name in computed && !entered.has(p.name.trim().toLowerCase()))
     .map((p) => ({ parameter: p.name!, value: String(computed[p.name!]) }));
-  return [...results, ...extra].map((r) => {
+  // narrative blocks (interpretation, clinical significance…) print from the catalog, never as results
+  const narrative = new Set(test.parameters.filter(isNarrative).map((p) => p.name!.trim().toLowerCase()));
+  return [...results, ...extra].filter((r) => !narrative.has(r.parameter.trim().toLowerCase())).map((r) => {
     const p = byName.get(r.parameter.trim().toLowerCase());
     if (!p) return r;
     const out: ResultValue = { ...r };
@@ -11956,6 +11973,17 @@ export async function scopedFind<T extends { id: Id }>(
   const lists = await Promise.all(scope.map((b) => repo.find({ ...filter, branchId: b } as never, { limit: limit + offset, sort })));
   const key = (x: T) => +((x as Record<string, unknown>)[sortField] as Date);
   return lists.flat().sort((a, b) => key(b) - key(a)).slice(offset, offset + limit);
+}
+
+/**
+ * A person's name as people write it: the first letter of every word upper case ("jyoti kosha-riya" →
+ * "Jyoti Kosha-Riya"), the rest kept as typed ("McDonald", "D'Souza" stay), spaces collapsed.
+ */
+export function properName(raw: string): string {
+  return raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/(^|[\s\-'.(])(\p{Ll})/gu, (_, sep: string, ch: string) => sep + ch.toLocaleUpperCase("en-IN"));
 }
 ```
 
@@ -12540,6 +12568,23 @@ async function suite(db: Db, tag: string) {
     await gql(owner, "mutation($r: ID!) { verifyReport(id: $r) { id } }", { r: lr });
     const lhtml = (await gql(owner, "query($b: ID!) { bookingReportDocument(bookingId: $b, format: html) { html } }", { b: lft.booking.id })).data?.bookingReportDocument.html ?? "";
     ok(/DIAZO/i.test(lhtml) && /GLOBULIN/.test(lhtml), `[${tag}] the printed report carries each parameter's method and the calculated rows`);
+    ok(/TUBE-0001/.test(lhtml), `[${tag}] the report's Sample ID is the tube barcode, not the booking number`);
+    // names, Widal titres → RESULT, narratives print as notes and are never stored as results
+    const jp = await gql(owner, "mutation($i: RegisterPatientInput!) { registerPatient(input: $i) { id name } }", { i: { branchId: a.branch.id, name: "  jyoti   koshariya ", sex: "female", ageYears: 20 } });
+    ok(jp.data?.registerPatient.name === "Jyoti Koshariya", `[${tag}] names are saved with capitals ("${jp.data?.registerPatient.name}")`);
+    const wb = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } samples { id } } }", { i: { branchId: a.branch.id, patientId: jp.data.registerPatient.id, tests: [{ testCode: "WIDS" }] } })).data?.createBooking;
+    await gql(owner, "mutation($id: ID!) { collectSample(id: $id) { id } }", { id: wb.samples[0].id });
+    await gql(owner, "mutation($id: ID!) { receiveSample(id: $id) { id } }", { id: wb.samples[0].id });
+    const wr = (await gql(owner, 'mutation($b: ID!) { createReport(bookingId: $b, testCode: "WIDS") { id } }', { b: wb.booking.id })).data?.createReport.id;
+    const ws = await gql(owner, "mutation($r: ID!, $x: [ResultInput!]!) { saveResults(reportId: $r, results: $x) { results { parameter value range } } }", {
+      r: wr, x: [{ parameter: "S.Typhi Antigen (O)", value: "1:160" }, { parameter: "S.Typhi Antigen (H)", value: "1:40" }, { parameter: "Interpretation", value: "typed by mistake" }],
+    });
+    const wres = ws.data?.saveResults.results ?? [];
+    ok(wres.find((x: any) => x.parameter === "RESULT")?.value === "POSITIVE", `[${tag}] Widal: RESULT computed from the titres (O 1:160 → POSITIVE)`);
+    ok(!wres.some((x: any) => x.parameter === "Interpretation") && !wres.some((x: any) => / \/ /.test(x.range ?? "")), `[${tag}] a narrative is not stored as a result, and no options list prints as a range`);
+    await gql(owner, "mutation($r: ID!) { verifyReport(id: $r) { id } }", { r: wr });
+    const whtml = (await gql(owner, "query($b: ID!) { bookingReportDocument(bookingId: $b, format: html) { html } }", { b: wb.booking.id })).data?.bookingReportDocument.html ?? "";
+    ok(/Sera from normal individuals/.test(whtml) && /Jyoti Koshariya/.test(whtml), `[${tag}] the lab's interpretation prints as a note under the test`);
     const li = (await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, bookingId: lft.booking.id, items: [{ code: "LIFT" }], payments: [] } })).data?.issueInvoice.id;
     const lt = (await gql(owner, "query($id: ID!) { invoice(id: $id) { totalPaise } }", { id: li })).data?.invoice.totalPaise;
     await gql(owner, "mutation($id: ID!, $p: PaymentInput!) { recordPayment(invoiceId: $id, payment: $p) { id } }", { id: li, p: { amountPaise: lt, mode: "cash" } });

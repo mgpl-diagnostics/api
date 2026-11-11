@@ -1,4 +1,4 @@
-import type { Interval, LabTest, Parameter } from "@mgpl-diagnostics/catalog-kit";
+import { isNarrative, type Interval, type LabTest, type Parameter } from "@mgpl-diagnostics/catalog-kit";
 import type { RequestContext as Ctx } from "../graphql/context";
 import { withErrorCodes } from "../graphql/errors";
 import { cap } from "../graphql/guards";
@@ -28,5 +28,6 @@ export const catalogController = withErrorCodes({
     male: (p: Parameter) => (p.male ? { low: bound(p.male.low), high: bound(p.male.high) } : null),
     female: (p: Parameter) => (p.female ? { low: bound(p.female.low), high: bound(p.female.high) } : null),
     range: (p: Parameter, a: { sex?: "male" | "female" | "other" | null }, ctx: Ctx) => ctx.services.catalog.formatRange(p, a.sex === "other" ? null : a.sex),
+    narrative: (p: Parameter) => isNarrative(p),
   },
 });

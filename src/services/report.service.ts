@@ -1,4 +1,4 @@
-import { computeCalculated, flagResult, formatRange, getTestByCode, type Sex as CatalogSex } from "@mgpl-diagnostics/catalog-kit";
+import { computeCalculated, flagResult, formatRange, getTestByCode, isNarrative, type Sex as CatalogSex } from "@mgpl-diagnostics/catalog-kit";
 import { ConflictError, saveResults, transitionReport, ValidationError, type Booking, type Id, type Report, type Repositories, type ResultValue, type Sex } from "@mgpl-diagnostics/db-kit";
 import type { Actor } from "../graphql/context";
 import { mustOwn } from "./util";
@@ -32,7 +32,9 @@ export function withCatalogDefaults(testCode: string, results: ResultValue[], se
   const extra: ResultValue[] = test.parameters
     .filter((p) => p.name && p.name in computed && !entered.has(p.name.trim().toLowerCase()))
     .map((p) => ({ parameter: p.name!, value: String(computed[p.name!]) }));
-  return [...results, ...extra].map((r) => {
+  // narrative blocks (interpretation, clinical significance…) print from the catalog, never as results
+  const narrative = new Set(test.parameters.filter(isNarrative).map((p) => p.name!.trim().toLowerCase()));
+  return [...results, ...extra].filter((r) => !narrative.has(r.parameter.trim().toLowerCase())).map((r) => {
     const p = byName.get(r.parameter.trim().toLowerCase());
     if (!p) return r;
     const out: ResultValue = { ...r };

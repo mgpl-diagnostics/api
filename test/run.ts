@@ -171,6 +171,23 @@ async function suite(db: Db, tag: string) {
     await gql(owner, "mutation($r: ID!) { verifyReport(id: $r) { id } }", { r: lr });
     const lhtml = (await gql(owner, "query($b: ID!) { bookingReportDocument(bookingId: $b, format: html) { html } }", { b: lft.booking.id })).data?.bookingReportDocument.html ?? "";
     ok(/DIAZO/i.test(lhtml) && /GLOBULIN/.test(lhtml), `[${tag}] the printed report carries each parameter's method and the calculated rows`);
+    ok(/TUBE-0001/.test(lhtml), `[${tag}] the report's Sample ID is the tube barcode, not the booking number`);
+    // names, Widal titres → RESULT, narratives print as notes and are never stored as results
+    const jp = await gql(owner, "mutation($i: RegisterPatientInput!) { registerPatient(input: $i) { id name } }", { i: { branchId: a.branch.id, name: "  jyoti   koshariya ", sex: "female", ageYears: 20 } });
+    ok(jp.data?.registerPatient.name === "Jyoti Koshariya", `[${tag}] names are saved with capitals ("${jp.data?.registerPatient.name}")`);
+    const wb = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } samples { id } } }", { i: { branchId: a.branch.id, patientId: jp.data.registerPatient.id, tests: [{ testCode: "WIDS" }] } })).data?.createBooking;
+    await gql(owner, "mutation($id: ID!) { collectSample(id: $id) { id } }", { id: wb.samples[0].id });
+    await gql(owner, "mutation($id: ID!) { receiveSample(id: $id) { id } }", { id: wb.samples[0].id });
+    const wr = (await gql(owner, 'mutation($b: ID!) { createReport(bookingId: $b, testCode: "WIDS") { id } }', { b: wb.booking.id })).data?.createReport.id;
+    const ws = await gql(owner, "mutation($r: ID!, $x: [ResultInput!]!) { saveResults(reportId: $r, results: $x) { results { parameter value range } } }", {
+      r: wr, x: [{ parameter: "S.Typhi Antigen (O)", value: "1:160" }, { parameter: "S.Typhi Antigen (H)", value: "1:40" }, { parameter: "Interpretation", value: "typed by mistake" }],
+    });
+    const wres = ws.data?.saveResults.results ?? [];
+    ok(wres.find((x: any) => x.parameter === "RESULT")?.value === "POSITIVE", `[${tag}] Widal: RESULT computed from the titres (O 1:160 → POSITIVE)`);
+    ok(!wres.some((x: any) => x.parameter === "Interpretation") && !wres.some((x: any) => / \/ /.test(x.range ?? "")), `[${tag}] a narrative is not stored as a result, and no options list prints as a range`);
+    await gql(owner, "mutation($r: ID!) { verifyReport(id: $r) { id } }", { r: wr });
+    const whtml = (await gql(owner, "query($b: ID!) { bookingReportDocument(bookingId: $b, format: html) { html } }", { b: wb.booking.id })).data?.bookingReportDocument.html ?? "";
+    ok(/Sera from normal individuals/.test(whtml) && /Jyoti Koshariya/.test(whtml), `[${tag}] the lab's interpretation prints as a note under the test`);
     const li = (await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, bookingId: lft.booking.id, items: [{ code: "LIFT" }], payments: [] } })).data?.issueInvoice.id;
     const lt = (await gql(owner, "query($id: ID!) { invoice(id: $id) { totalPaise } }", { id: li })).data?.invoice.totalPaise;
     await gql(owner, "mutation($id: ID!, $p: PaymentInput!) { recordPayment(invoiceId: $id, payment: $p) { id } }", { id: li, p: { amountPaise: lt, mode: "cash" } });

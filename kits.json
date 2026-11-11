@@ -11,7 +11,7 @@
     },
     {
       "name": "catalog-kit",
-      "ref": "v1.1.0"
+      "ref": "v1.2.0"
     },
     {
       "name": "report-reader",
@@ -27,7 +27,7 @@
     },
     {
       "name": "report-kit",
-      "ref": "v2.1.0"
+      "ref": "v2.2.0"
     },
     {
       "name": "ledger-kit",
@@ -35,7 +35,7 @@
     },
     {
       "name": "client",
-      "ref": "v1.8.0"
+      "ref": "v1.9.0"
     },
     {
       "name": "invoice-kit",

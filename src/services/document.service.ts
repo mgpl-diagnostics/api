@@ -1,4 +1,4 @@
-import { getTestByCode } from "@mgpl-diagnostics/catalog-kit";
+import { getTestByCode, isNarrative } from "@mgpl-diagnostics/catalog-kit";
 import {
   ConflictError, NotFoundError, ValidationError,
   type Id, type Invoice as DbInvoice, type Patient as DbPatient, type PaymentMode, type Report as DbReport, type Repositories,
@@ -9,11 +9,11 @@ import {
 } from "@mgpl-diagnostics/invoice-kit";
 import {
   buildReport, COLS_STD, defaultLab, renderLetterheadHtml, renderLetterheadPdf, renderReportHtml, renderReportPdf, reportFromRequest, SAMPLES, templateCatalog, TEMPLATES,
-  type LabProfile, type Patient as PrintPatient, type Report as PrintReport, type ReportDesign, type ReportRequest, type ReportTestProvenance, type ReportVariant, type Section, type TestRow,
+  type LabProfile, type Patient as PrintPatient, type Report as PrintReport, type ReportDesign, type ReportRequest, type ReportTestProvenance, type ReportVariant, type Row, type Section, type TestRow,
 } from "@mgpl-diagnostics/report-kit";
 import type { Actor } from "../graphql/context";
 import { printedProvenance } from "./import.service";
-import { mustOwn } from "./util";
+import { mustOwn, properName } from "./util";
 
 export type DocumentFormat = "pdf" | "html";
 
@@ -50,7 +50,7 @@ function ageOf(p: DbPatient, at: Date): number | string {
 /** db-kit patient → the printed patient block. */
 export function printPatient(p: DbPatient, at: Date, extra: Partial<PrintPatient> = {}): PrintPatient {
   return {
-    title: p.title, name: p.name, age: ageOf(p, at), sex: titleCase(p.sex), patientId: p.uhid, phone: p.phone,
+    title: p.title, name: properName(p.name), age: ageOf(p, at), sex: titleCase(p.sex), patientId: p.uhid, phone: p.phone,
     address: [p.address?.line1, p.address?.city].filter(Boolean).join(", ") || undefined, ...extra,
   };
 }
@@ -164,7 +164,8 @@ export class DocumentService {
     const collected = samples.map((s) => s.collectedAt).filter(Boolean).sort()[0] ?? booking.createdAt;
     const reportedAt = reports.map((r) => r.verifiedAt ?? r.updatedAt).filter(Boolean).sort().at(-1) ?? new Date();
     const printed = printPatient(patient, reportedAt, {
-      refDoctor: doctor?.name ?? "Self", sampleId: booking.bookingNo, sampleCollectionDate: collected, collectedAt: collected, registeredAt: booking.createdAt, reportedAt,
+      // the tubes' barcodes (one per sample type); the booking number is not a sample id
+      refDoctor: doctor?.name ?? "Self", sampleId: samples.filter((s) => s.status !== "rejected").map((s) => s.barcode).join(", ") || booking.bookingNo, sampleCollectionDate: collected, collectedAt: collected, registeredAt: booking.createdAt, reportedAt,
     });
     const sections: Section[] = [];
     for (const r of reports) {
@@ -232,10 +233,16 @@ export class DocumentService {
       subtitle: r.testName,
       specimen: cat?.sampleType ?? undefined,
       columns: COLS_STD,
-      rows: r.results.map((x): TestRow => {
-        const method = methodOf.get(norm(x.parameter));
-        return { kind: "test", name: x.parameter, result: x.value, unit: x.unit, range: x.range, flag: flag(x.flag), ...(method ? { method } : {}) };
-      }),
+      rows: [
+        ...r.results.map((x): TestRow => {
+          const method = methodOf.get(norm(x.parameter));
+          return { kind: "test", name: x.parameter, result: x.value, unit: x.unit, range: x.range, flag: flag(x.flag), ...(method ? { method } : {}) };
+        }),
+        // the test's interpretation / clinical significance / notes, as the lab prints them, small, under the table
+        ...(cat?.parameters ?? []).filter(isNarrative).map((p, k): Row => ({
+          kind: "text", spaceBefore: k === 0 ? 4 : 0, content: { text: (p.referenceText ?? "").trim(), size: 7, color: "#5A6478" },
+        })),
+      ],
     }];
   }
 

@@ -18,6 +18,8 @@ export const catalogTypeDefs = /* GraphQL */ `
     referenceText: String
     "The printed range for a sex (or both)."
     range(sex: Sex): String!
+    "An interpretation / clinical significance / note block: printed under the test, never entered as a result."
+    narrative: Boolean!
   }
 
   type CatalogTest {

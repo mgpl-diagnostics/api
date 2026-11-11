@@ -305,6 +305,11 @@ type CatalogParameter {
   male: CatalogInterval
   method: String
   name: String
+
+  """
+  An interpretation / clinical significance / note block: printed under the test, never entered as a result.
+  """
+  narrative: Boolean!
   options: [String!]
 
   """The printed range for a sex (or both)."""
