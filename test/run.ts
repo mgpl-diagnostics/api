@@ -146,6 +146,43 @@ async function suite(db: Db, tag: string) {
   ok(tb.data?.trialBalance.differencePaise === 0 && tb.data.trialBalance.totalDebitPaise > 0 && tb.data.outstandingReceivables.totalDuePaise === 0, `[${tag}] trial balance balances (ledger-kit); nothing outstanding`);
   const invDoc = await gql(owner, "query($id: ID!) { invoiceDocument(invoiceId: $id) { base64 fileName } h: invoiceDocument(invoiceId: $id, format: html) { html } }", { id: invoiceId });
   ok(Buffer.from(invDoc.data?.invoiceDocument.base64 ?? "", "base64").subarray(0, 5).toString() === "%PDF-" && invDoc.data.h.html.includes(inv.data.issueInvoice.invoiceNo), `[${tag}] invoiceDocument: invoice-kit PDF + HTML of the stored invoice (totals match)`);
+  // ---------------------------------------------------------------- tube labels, calculated values, methods, refunds on paper
+  {
+    const lft = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } samples { id barcode } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "LIFT" }] } })).data?.createBooking;
+    const sid = lft.samples[0].id;
+    ok((await gql(owner, 'mutation($id: ID!) { relabelSample(id: $id, barcode: "TUBE-0001") { barcode } }', { id: sid })).data?.relabelSample.barcode === "TUBE-0001", `[${tag}] relabelSample: the tube's own label replaces the generated barcode`);
+    ok(code(await gql(owner, 'mutation($id: ID!) { relabelSample(id: $id, barcode: "x") { barcode } }', { id: sid })) === "BAD_USER_INPUT", `[${tag}] a malformed barcode → BAD_USER_INPUT`);
+    const taken = await gql(owner, 'mutation($id: ID!) { collectSample(id: $id, barcode: "TUBE-0001") { barcode } }', { id: booking.samples[0].id });
+    ok(code(taken) === "CONFLICT", `[${tag}] a received sample keeps its barcode → CONFLICT`);
+    const lft2 = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { samples { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "LIFT" }] } })).data?.createBooking;
+    const dup = await gql(owner, 'mutation($id: ID!) { collectSample(id: $id, barcode: "TUBE-0001") { barcode } }', { id: lft2.samples[0].id });
+    ok(code(dup) === "BARCODE_TAKEN" && (dup.errors?.[0]?.extensions as { barcode?: string } | undefined)?.barcode === "TUBE-0001", `[${tag}] the same label on a second tube → BARCODE_TAKEN`);
+    const col = await gql(owner, 'mutation($id: ID!) { collectSample(id: $id, barcode: "TUBE-0002") { status barcode } }', { id: lft2.samples[0].id });
+    ok(col.data?.collectSample.status === "collected" && col.data.collectSample.barcode === "TUBE-0002", `[${tag}] collectSample with the tube's label`);
+    await gql(owner, "mutation($id: ID!) { collectSample(id: $id) { id } }", { id: sid });
+    await gql(owner, "mutation($id: ID!) { receiveSample(id: $id) { id } }", { id: sid });
+    const lr = (await gql(owner, 'mutation($b: ID!) { createReport(bookingId: $b, testCode: "LIFT") { id } }', { b: lft.booking.id })).data?.createReport.id;
+    const lsaved = await gql(owner, "mutation($r: ID!, $x: [ResultInput!]!) { saveResults(reportId: $r, results: $x) { results { parameter value flag } } }", {
+      r: lr, x: [{ parameter: "BILIRUBIN - TOTAL", value: "2.60" }, { parameter: "BILIRUBIN -DIRECT", value: "1.10" }, { parameter: "TOTAL-PROTEIN", value: "7.60" }, { parameter: "ALBUMIN - SERUM", value: "4.40" }],
+    });
+    const byName = new Map<string, { value: string; flag: string }>((lsaved.data?.saveResults.results ?? []).map((x: any) => [x.parameter, x]));
+    ok(byName.get("BILIRUBIN (INDIRECT)")?.value === "1.5" && byName.get("GLOBULIN")?.value === "3.2" && byName.get("ALB/GLOBULIN RATIO")?.value === "1.38", `[${tag}] saveResults computes calculated parameters (indirect bilirubin, globulin, A/G ratio)`);
+    ok(byName.get("BILIRUBIN (INDIRECT)")?.flag === "H", `[${tag}] …and flags them (indirect bilirubin 1.5 → H)`);
+    await gql(owner, "mutation($r: ID!) { verifyReport(id: $r) { id } }", { r: lr });
+    const lhtml = (await gql(owner, "query($b: ID!) { bookingReportDocument(bookingId: $b, format: html) { html } }", { b: lft.booking.id })).data?.bookingReportDocument.html ?? "";
+    ok(/DIAZO/i.test(lhtml) && /GLOBULIN/.test(lhtml), `[${tag}] the printed report carries each parameter's method and the calculated rows`);
+    const li = (await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, bookingId: lft.booking.id, items: [{ code: "LIFT" }], payments: [] } })).data?.issueInvoice.id;
+    const lt = (await gql(owner, "query($id: ID!) { invoice(id: $id) { totalPaise } }", { id: li })).data?.invoice.totalPaise;
+    await gql(owner, "mutation($id: ID!, $p: PaymentInput!) { recordPayment(invoiceId: $id, payment: $p) { id } }", { id: li, p: { amountPaise: lt, mode: "cash" } });
+    await gql(owner, "mutation($id: ID!, $p: PaymentInput!) { refundPayment(invoiceId: $id, payment: $p) { id } }", { id: li, p: { amountPaise: lt, mode: "cash" } });
+    const rhtml = (await gql(owner, "query($id: ID!) { invoiceDocument(invoiceId: $id, format: html) { html } }", { id: li })).data?.invoiceDocument.html ?? "";
+    ok(/REFUNDED/.test(rhtml) && !/>PAID</.test(rhtml) && /Refund/.test(rhtml) && /TUBE-0001/.test(rhtml), `[${tag}] a refunded invoice prints REFUNDED with the refund row (not PAID), and the booking's tube barcode`);
+    const ci = (await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, items: [{ code: "LIFT" }] } })).data?.issueInvoice.id;
+    await gql(owner, 'mutation($id: ID!) { cancelInvoice(id: $id, reason: "Duplicate bill") { id } }', { id: ci });
+    const chtml = (await gql(owner, "query($id: ID!) { invoiceDocument(invoiceId: $id, format: html) { html } }", { id: ci })).data?.invoiceDocument.html ?? "";
+    ok(/CANCELLED/.test(chtml) && !/Scan to pay/.test(chtml), `[${tag}] a cancelled invoice prints CANCELLED and asks for no payment`);
+  }
+
   const anyDoc = await gql(owner, '{ renderReport(request: { sample: "cbc" }, format: html) { html } invoiceTotals(request: { invoice: { invoiceNo: "T-1", patient: { name: "Kavita Sharma", age: 32, sex: "Female" }, items: ["cbc"] } }) reportTemplates { templates { id } } }');
   ok(anyDoc.data?.renderReport.html.includes("<html") && anyDoc.data.invoiceTotals.total > 0 && anyDoc.data.reportTemplates.templates.length > 20, `[${tag}] renderReport / invoiceTotals / reportTemplates from request data`);
   ok(code(await gql(owner, "{ renderReport(request: { patient: { name: \"X\" } }) { fileName } }")) === "BAD_USER_INPUT", `[${tag}] bad report request → BAD_USER_INPUT`);

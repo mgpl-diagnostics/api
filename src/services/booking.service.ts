@@ -33,6 +33,17 @@ export function bookingTest(t: BookingTestInput): BookingTest {
   return clean({ testCode: t.testCode, name, pricePaise, sampleType: t.sampleType ?? cat?.sampleType ?? undefined }) as BookingTest;
 }
 
+/** The sample barcode is already used by another sample of this organisation (BARCODE_TAKEN). */
+export class BarcodeTakenError extends ConflictError {
+  constructor(readonly barcode: string) {
+    super(`Barcode ${barcode} is already on another sample`);
+    this.name = "BarcodeTakenError";
+  }
+}
+
+/** A tube label: 3-32 letters, digits, - _ / . (what pre-printed labels and scanners produce). */
+export const BARCODE = /^[A-Za-z0-9][A-Za-z0-9\-_/.]{2,31}$/;
+
 /** Bookings and their samples (barcodes). */
 export class BookingService {
   constructor(private readonly repos: Repositories) {}
@@ -86,12 +97,44 @@ export class BookingService {
     return owned(await this.repos.samples.findOne({ orgId: actor.orgId, barcode: barcode.trim() }), actor.orgId);
   }
 
-  async collectSample(actor: Actor, s: Sample) {
+  /**
+   * A new barcode for a sample, e.g. the pre-printed label on the tube the branch has. Unique within the
+   * organisation (the database enforces it too); allowed until the lab receives the sample.
+   */
+  private async checkBarcode(s: Sample, raw: string): Promise<string> {
+    const barcode = raw.trim();
+    if (!BARCODE.test(barcode)) throw new ValidationError("A barcode is 3-32 letters, digits or - _ / .");
+    const other = await this.repos.samples.findOne({ orgId: s.orgId, barcode });
+    if (other && other.id !== s.id) throw new BarcodeTakenError(barcode);
+    return barcode;
+  }
+
+  private async updateBarcode(s: Sample, patch: Partial<Sample>) {
+    try {
+      return await this.repos.samples.update(s.id, patch);
+    } catch (e) {
+      // two people saving the same new barcode at once: the unique index decides
+      if (patch.barcode && /unique|duplicate|E11000/i.test(String((e as Error)?.message ?? e))) throw new BarcodeTakenError(patch.barcode);
+      throw e;
+    }
+  }
+
+  async relabelSample(actor: Actor, s: Sample, raw: string) {
+    if (s.status !== "pending" && s.status !== "collected") throw new ConflictError(`Sample is ${s.status}: its barcode can no longer change`);
+    const barcode = await this.checkBarcode(s, raw);
+    if (barcode === s.barcode) return s;
+    const out = await this.updateBarcode(s, { barcode });
+    await this.repos.audit.log({ orgId: s.orgId, branchId: s.branchId, userId: actor.userId, action: "sample.relabel", entity: "sample", entityId: s.id, data: { from: s.barcode, to: barcode } });
+    return out!;
+  }
+
+  async collectSample(actor: Actor, s: Sample, raw?: string | null) {
     if (s.status !== "pending") throw new ConflictError(`Sample is ${s.status}`);
-    const out = await this.repos.samples.update(s.id, { status: "collected", collectedAt: new Date(), collectedBy: actor.userId });
+    const barcode = raw?.trim() ? await this.checkBarcode(s, raw) : s.barcode;
+    const out = await this.updateBarcode(s, { status: "collected", collectedAt: new Date(), collectedBy: actor.userId, ...(barcode !== s.barcode ? { barcode } : {}) });
     const b = await this.repos.bookings.get(s.bookingId);
     if (b?.status === "booked") await this.repos.bookings.update(b.id, { status: "sample_collected" });
-    await this.repos.audit.log({ orgId: s.orgId, branchId: s.branchId, userId: actor.userId, action: "sample.collect", entity: "sample", entityId: s.id });
+    await this.repos.audit.log({ orgId: s.orgId, branchId: s.branchId, userId: actor.userId, action: "sample.collect", entity: "sample", entityId: s.id, ...(barcode !== s.barcode ? { data: { from: s.barcode, to: barcode } } : {}) });
     return out!;
   }
 

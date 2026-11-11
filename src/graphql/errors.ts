@@ -4,6 +4,7 @@ import { CreditLimitError } from "@mgpl-diagnostics/finance-kit";
 import { HttpError } from "@mgpl-diagnostics/report-kit";
 import { GraphQLError } from "graphql";
 import { BookingPatientMismatchError, FileTooLargeError, ReportAlreadyAppliedError, UnsupportedReportError } from "../services/import.service";
+import { BarcodeTakenError } from "../services/booking.service";
 import { ForbiddenError } from "../services/util";
 
 /**
@@ -18,6 +19,8 @@ export const ERROR_CODES = [
   "ORG_UNAVAILABLE",
   // partner-lab imports (docs/18-imports.md)
   "UNSUPPORTED_REPORT", "REPORT_ALREADY_APPLIED", "BOOKING_PATIENT_MISMATCH", "FILE_TOO_LARGE",
+  // samples
+  "BARCODE_TAKEN",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -45,6 +48,7 @@ export function toGraphQLError(e: unknown): unknown {
   if (e instanceof UnsupportedReportError) return apiError("UNSUPPORTED_REPORT", e.message, 422);
   if (e instanceof FileTooLargeError) return apiError("FILE_TOO_LARGE", e.message, 413, { maxBytes: e.maxBytes });
   if (e instanceof ReportAlreadyAppliedError) return apiError("REPORT_ALREADY_APPLIED", e.message, 409);
+  if (e instanceof BarcodeTakenError) return apiError("BARCODE_TAKEN", e.message, 409, { barcode: e.barcode });
   if (e instanceof BookingPatientMismatchError) return apiError("BOOKING_PATIENT_MISMATCH", e.message, 409, { mismatches: e.mismatches });
   if (e instanceof PeriodLockedError) return apiError("PERIOD_LOCKED", e.message, 409);
   if (e instanceof CreditLimitError) return apiError("CREDIT_LIMIT_EXCEEDED", e.message, 409);

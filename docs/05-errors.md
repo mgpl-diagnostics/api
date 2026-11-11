@@ -20,6 +20,7 @@ Every error in a response carries `extensions.code`. Clients switch on the code,
 | `PERIOD_LOCKED` | 409 | A posting date is on or before a lock date | Ask an accountant; pick another date |
 | `CREDIT_LIMIT_EXCEEDED` | 409 | A B2B invoice would exceed the customer's credit limit | Collect payment or raise the limit |
 | `UNSUPPORTED_REPORT` | 422 | `importExternalReport`: the PDF is not from a supported partner lab | Tell the user; enter results by hand |
+| `BARCODE_TAKEN` | 409 | `collectSample(barcode)` / `relabelSample`: another sample of the organisation already has this label (`extensions.barcode`) | Scan the tube again, or use a new label |
 | `FILE_TOO_LARGE` | 413 | A partner PDF over `IMPORT_MAX_BYTES`, or any other request over `BODY_LIMIT_BYTES` (`extensions.maxBytes`) | Ask for a smaller file |
 | `BOOKING_PATIENT_MISMATCH` | 409 | `applyExternalReport`: the booking's patient differs (`extensions.mismatches`) | Show the differences; resend with `confirmPatientMismatch: true` if staff confirm |
 | `REPORT_ALREADY_APPLIED` | 409 | The partner report was already applied | Open the reports it created |

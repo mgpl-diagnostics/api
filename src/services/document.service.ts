@@ -115,19 +115,24 @@ export class DocumentService {
     const at = invoice.issuedAt ?? invoice.createdAt;
     const lineDiscounts = invoice.items.reduce((s, i) => s + i.discountPaise, 0);
     const billDiscount = invoice.discountPaise - lineDiscounts;
-    const refunded = payments.filter((p) => p.kind === "refund").reduce((s, p) => s + p.amountPaise, 0);
+    // the booking's tube barcodes (one per sample type), so the bill names the samples it covers
+    const samples = invoice.bookingId ? await this.repos.samples.find({ bookingId: invoice.bookingId }, { sort: { field: "barcode" } }) : [];
+    const sampleId = samples.filter((s) => s.status !== "rejected").map((s) => s.barcode).join(", ") || undefined;
     const items: PrintItem[] = invoice.items.map((i) => ({
       code: i.code, name: i.name, category: i.category === "package" ? "profile" : i.category, qty: i.qty, rate: rupees(i.ratePaise),
       discountAmount: i.discountPaise ? rupees(i.discountPaise) : undefined, taxPercent: i.taxPercent || undefined, hsn: i.hsnSac,
     }));
-    const notes = [invoice.status === "cancelled" ? `CANCELLED: ${invoice.cancelReason ?? ""}`.trim() : "", refunded ? `Refunded Rs. ${rupees(refunded).toFixed(2)}` : ""].filter(Boolean);
+    // refunds print as their own rows in the payments table (invoice-kit ≥ 2.1), not as a note
+    const notes = [invoice.status === "cancelled" ? `CANCELLED: ${invoice.cancelReason ?? ""}`.trim() : ""].filter(Boolean);
     return {
       invoiceNo: invoice.invoiceNo,
       date: at,
-      patient: printPatient(patient, at),
+      patient: printPatient(patient, at, sampleId ? { sampleId } : {}),
       items,
       discount: billDiscount > 0 ? { amount: rupees(billDiscount) } : undefined,
-      payments: payments.filter((p) => p.kind === "payment").map((p) => ({ mode: MODE_LABEL[p.mode], amount: rupees(p.amountPaise), date: p.receivedAt, reference: p.reference })),
+      // payments and refunds: invoice-kit nets them (a refunded bill no longer prints PAID with "excess paid")
+      payments: payments.map((p) => ({ mode: MODE_LABEL[p.mode], amount: rupees(p.amountPaise), date: p.receivedAt, reference: p.reference, kind: p.kind === "refund" ? ("refund" as const) : ("payment" as const) })),
+      cancelled: invoice.status === "cancelled",
       notes: notes.length ? notes : undefined,
       roundOff: true,
     };
@@ -204,9 +209,10 @@ export class DocumentService {
   private sections(r: DbReport, patient: PrintPatient): Section[] {
     const template = (TEMPLATES as Record<string, (typeof TEMPLATES)[keyof typeof TEMPLATES]>)[r.testCode.toLowerCase()];
     const flag = (f: string | undefined): TestRow["flag"] => (f === "H" ? "high" : f === "L" ? "low" : f === "A" ? "abnormal" : f === "" ? "normal" : "auto");
+    // names compared ignoring case and punctuation
+    const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
     if (template) {
-      // results match a template row by its key ("hb") or its label ("Haemoglobin (HB)"), ignoring case and punctuation
-      const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+      // results match a template row by its key ("hb") or its label ("Haemoglobin (HB)")
       const keyOf = new Map<string, string>();
       for (const f of template.fields) {
         keyOf.set(norm(f.key), f.key);
@@ -219,12 +225,17 @@ export class DocumentService {
       if (matched.length === r.results.length && matched.length) return buildReport(patient, [{ template: template.id as never, results: Object.fromEntries(matched) }]).sections;
     }
     const cat = getTestByCode(r.testCode);
+    // the method of each parameter, from the catalog (results store value, unit, range and flag only)
+    const methodOf = new Map((cat?.parameters ?? []).filter((p) => p.name && p.method).map((p) => [norm(p.name!), p.method!] as const));
     return [{
       title: (cat?.department ?? "LABORATORY").toUpperCase(),
       subtitle: r.testName,
       specimen: cat?.sampleType ?? undefined,
       columns: COLS_STD,
-      rows: r.results.map((x): TestRow => ({ kind: "test", name: x.parameter, result: x.value, unit: x.unit, range: x.range, flag: flag(x.flag) })),
+      rows: r.results.map((x): TestRow => {
+        const method = methodOf.get(norm(x.parameter));
+        return { kind: "test", name: x.parameter, result: x.value, unit: x.unit, range: x.range, flag: flag(x.flag), ...(method ? { method } : {}) };
+      }),
     }];
   }
 
