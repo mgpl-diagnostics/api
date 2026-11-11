@@ -1,0 +1,29 @@
+name: Docker
+
+# Builds the image on every PR and on main without pushing, to catch Dockerfile bugs before a release
+# (a missing COPY, a dependency dropped by `npm prune`, a native module that fails to load).
+# Pushing to GHCR stays in release.yml (v* tag or manual run on main). The build itself lives in
+# mgpl-diagnostics/.github (.github/workflows/docker-build.yml), shared with the dashboard.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "test/**", "llms.txt", "llms-full.txt", "schema.graphql", "LICENSE"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", "test/**", "llms.txt", "llms-full.txt", "schema.graphql", "LICENSE"]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docker:
+    uses: mgpl-diagnostics/.github/.github/workflows/docker-build.yml@claude/project-thread-dsh6g4
+    with:
+      # loads every kit the api imports (report-kit's native resvg included) from the pruned node_modules
+      smoke: >-
+        docker run --rm "$IMAGE" node --input-type=module
+        -e "await import('/app/dist/index.js'); console.log('api image: every module loads'); process.exit(0)"

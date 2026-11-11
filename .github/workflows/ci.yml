@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # The job id "ci" is the required status check on main (see mgpl-diagnostics/.github scripts/protect-repos.mjs).
@@ -26,20 +26,20 @@ jobs:
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          registry-url: https://npm.pkg.github.com
-          scope: "@mgpl-diagnostics"
       # The kits come from GitHub Packages at the versions pinned in package-lock.json.
       # (`npm run kits` still builds unreleased kit branches from source for local testing.)
-      - run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: mgpl-diagnostics/.github/actions/node@claude/project-thread-dsh6g4
+        with:
+          github-packages: "true"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          install: npm ci --no-audit --no-fund
+          mongodb: "true"
       - run: npm run typecheck
       # the [pgbouncer] and [replicas] checks run the API through PgBouncer in transaction mode
-      - name: Install PgBouncer
-        run: sudo apt-get update -q && sudo apt-get install -y -q pgbouncer
+      # from cached .debs, so a mirror outage no longer holds the run (it once failed after five minutes)
+      - uses: mgpl-diagnostics/.github/actions/apt@claude/project-thread-dsh6g4
+        with:
+          packages: pgbouncer
       - name: End-to-end tests (GraphQL over HTTP, tokens, worker on Redis, client SDK) on PostgreSQL, PostgreSQL through PgBouncer and MongoDB
         run: npm test
         env:
