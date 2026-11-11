@@ -761,7 +761,7 @@ and runnable examples are in [examples/](examples/).
 | mutation | `amendReport(id: ID!): Report!` | `report:amend` |  |
 | mutation | `cancelBooking(id: ID!): Booking!` | `booking:cancel` |  |
 | mutation | `collectSample(id: ID!, barcode: String): Sample!` | `sample:collect` | Marks the sample collected. barcode: the tube's own label, when it is not the generated one (unique in the organisation). |
-| mutation | `createBooking(input: CreateBookingInput!): CreateBookingResult!` | `booking:create` |  |
+| mutation | `createBooking(input: CreateBookingInput!): CreateBookingResult!` | `booking:create`, `invoice:create`, `invoice:discount`, `payment:create` |  |
 | mutation | `createDoctor(input: DoctorInput!): Doctor!` | `doctor:manage` |  |
 | mutation | `createReport(bookingId: ID!, testCode: String!, testName: String): Report!` | `report:enter` |  |
 | mutation | `receiveSample(id: ID!): Sample!` | `sample:receive` |  |
@@ -770,6 +770,7 @@ and runnable examples are in [examples/](examples/).
 | mutation | `relabelSample(id: ID!, barcode: String!): Sample!` | `sample:collect` | A new barcode for a sample that the lab has not received yet (BARCODE_TAKEN when another sample has it). |
 | mutation | `releaseReport(id: ID!): Report!` | `report:release` |  |
 | mutation | `saveResults(reportId: ID!, results: [ResultInput!]!): Report!` | `report:enter` |  |
+| mutation | `updateBooking(id: ID!, input: UpdateBookingInput!): UpdateBookingResult!` | `booking:update`, `invoice:cancel`, `invoice:create`, `accounts:post` | Edits a booking (booking:update): doctor, collection details, notes, tests. Samples follow the tests. Billing follows too: an unpaid invoice is cancelled and issued again (invoice:cancel when tests are removed, invoice:create), a paid one gets a credit note for removed tests (accounts:post) and an invoice for added ones (invoice:create). One transaction, audited as booking.update. |
 | mutation | `updateDoctor(id: ID!, input: DoctorPatch!): Doctor!` | `doctor:manage` |  |
 | mutation | `updatePatient(id: ID!, input: UpdatePatientInput!): Patient!` | `patient:update` |  |
 | mutation | `verifyReport(id: ID!): Report!` | `report:verify` |  |
@@ -1242,11 +1243,31 @@ stateDiagram-v2
   booked --> cancelled: cancelBooking
   sample_collected --> cancelled: cancelBooking
   in_process --> cancelled: cancelBooking
-  note right of cancelled: needs the booking's invoice cancelled first
+  booked --> booked: updateBooking
+  sample_collected --> sample_collected: updateBooking
+  in_process --> in_process: updateBooking
+  note right of cancelled: needs the booking's invoices cancelled first
 ```
 
 `createBooking` accepts `tests: [{ testCode }]`; the name, price (paise) and sample type come from the
 catalog unless given. One sample (with a barcode) is created per distinct sample type.
+
+**Billing at booking.** With `bill: { payments, billDiscountPaise, applyTaxRules }` the same request issues the
+invoice for the booked tests, in one transaction: a bad discount or payment leaves no booking behind. It needs
+`invoice:create` (a discount `invoice:discount`, payments `payment:create`).
+
+**Editing a booking** (`updateBooking`, `booking:update`), while it is booked, sample collected or in process:
+
+| Change | What happens |
+|---|---|
+| Doctor, collection type, time, address, notes | Saved. `null` clears the doctor, time or address. |
+| Add tests | New sample types get a new pending tube. |
+| Remove tests | Only while the test has no results (its empty report is dropped). A tube not collected yet is dropped when no test needs it. The last test can't be removed: cancel the booking. |
+| Tests change on an **unpaid** invoice | The invoice is cancelled and issued again with the booking's tests, keeping line discounts and the bill discount (capped). Needs `invoice:create`, and `invoice:cancel` when tests are removed. |
+| A test is removed from a **paid** (or credited) invoice | A credit note for that line (`accounts:post`); `refundablePaise` says what can be refunded with `refundPayment`. |
+| Tests are added after payment | A new invoice for the added tests (`invoice:create`). `Booking.invoice` stays the first one; `Booking.invoices` lists them all. |
+
+Everything runs in one transaction and is audited as `booking.update` (what changed).
 
 ## Sample
 
@@ -3011,7 +3032,7 @@ flowchart TD
     },
     {
       "name": "client",
-      "ref": "v1.9.0"
+      "ref": "v1.10.0"
     },
     {
       "name": "invoice-kit",
@@ -3075,7 +3096,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/api",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "MGPL Diagnostics backend: one GraphQL endpoint (GraphQL Yoga on Fastify) over the kits (auth, db, catalog, report, invoice, finance, tally) used as internal libraries, plus a BullMQ worker on Redis.",
   "type": "module",
@@ -3123,7 +3144,7 @@ Key facts for agents:
     "sequelize": "^6.37.8"
   },
   "devDependencies": {
-    "@mgpl-diagnostics/client": "^1.9.0",
+    "@mgpl-diagnostics/client": "^1.10.0",
     "@types/node": "^22.20.5",
     "embedded-postgres": "^18.4.0-beta.17",
     "ioredis-mock": "^8.13.1",
@@ -3326,7 +3347,14 @@ type Booking {
   createdAt: DateTime!
   doctor: Doctor
   id: ID!
+
+  """The booking's current invoice (the first one that is not cancelled)."""
   invoice: Invoice
+
+  """
+  Every invoice issued for the booking, oldest first: its first one, replacements, and invoices for tests added after it was paid.
+  """
+  invoices: [Invoice!]!
   notes: String
   patient: Patient!
   reports: [Report!]!
@@ -3334,6 +3362,15 @@ type Booking {
   samples: [Sample!]!
   status: BookingStatus!
   tests: [BookingTest!]!
+}
+
+input BookingBillInput {
+  """Fill HSN/SAC, taxability and GST rate from the tax rules."""
+  applyTaxRules: Boolean = false
+  billDiscountPaise: Int = 0
+
+  """Taken at the counter with the booking."""
+  payments: [PaymentInput!]
 }
 
 enum BookingStatus {
@@ -3528,6 +3565,10 @@ type ComponentUpdate {
 }
 
 input CreateBookingInput {
+  """
+  Bill at once: an invoice for the booked tests, in the same transaction (needs invoice:create; a discount needs invoice:discount, payments payment:create).
+  """
+  bill: BookingBillInput
   branchId: ID!
   collectionType: CollectionType = walk_in
   doctorId: ID
@@ -3539,6 +3580,9 @@ input CreateBookingInput {
 
 type CreateBookingResult {
   booking: Booking!
+
+  """Issued with the booking when input.bill is given."""
+  invoice: Invoice
   samples: [Sample!]!
 }
 
@@ -4468,6 +4512,14 @@ type Mutation {
   session ends (INVALID_TOKEN). ORG_UNAVAILABLE when there is no such account, or it is the current lab.
   """
   switchOrganization(device: DeviceInput, orgCode: String!): LoginResult!
+
+  """
+  Edits a booking (booking:update): doctor, collection details, notes, tests. Samples follow the tests. Billing
+  follows too: an unpaid invoice is cancelled and issued again (invoice:cancel when tests are removed,
+  invoice:create), a paid one gets a credit note for removed tests (accounts:post) and an invoice for added ones
+  (invoice:create). One transaction, audited as booking.update.
+  """
+  updateBooking(id: ID!, input: UpdateBookingInput!): UpdateBookingResult!
   updateBranch(id: ID!, input: BranchPatch!): Branch!
   updateCustomer(id: ID!, input: CustomerPatch!): Customer!
   updateDoctor(id: ID!, input: DoctorPatch!): Doctor!
@@ -5316,6 +5368,43 @@ type TrialBalanceRow {
   group: AccountGroup!
   ledger: Ledger!
   primaryGroup: AccountGroup!
+}
+
+"""
+Changes to a booking; fields left out stay as they are. doctorId: null removes the doctor, scheduledAt: null
+and collectionAddress: null clear them. Tests can be removed only while they have no results.
+"""
+input UpdateBookingInput {
+  addTests: [BookingTestInput!]
+  collectionAddress: AddressInput
+  collectionType: CollectionType
+  doctorId: ID
+  notes: String
+  removeTestCodes: [String!]
+  scheduledAt: DateTime
+}
+
+type UpdateBookingResult {
+  booking: Booking!
+
+  """
+  Unpaid invoices cancelled by the change (replaced, or no longer needed).
+  """
+  cancelledInvoices: [Invoice!]!
+
+  """
+  Credit notes for removed tests on invoices that were paid or already credited.
+  """
+  creditNotes: [CreditNote!]!
+
+  """
+  Invoices issued by the change: a replacement for an unpaid invoice, or one for tests added after payment.
+  """
+  issuedInvoices: [Invoice!]!
+
+  """Money paid that can now be refunded (refundPayment on the invoice)."""
+  refundablePaise: Int!
+  samples: [Sample!]!
 }
 
 input UpdatePatientInput {
@@ -6889,7 +6978,7 @@ import type { Booking, BookingStatus, BookingTest, Patient, Report, ResultValue,
 import type { RequestContext as Ctx } from "../graphql/context";
 import { withErrorCodes } from "../graphql/errors";
 import { actorOf, authorize, branchScope, canSee, cap } from "../graphql/guards";
-import type { CreateBookingInput } from "../services/booking.service";
+import type { CreateBookingInput, UpdateBookingInput } from "../services/booking.service";
 import type { DoctorInput, RegisterPatientInput } from "../services/patient.service";
 import { scopedFind } from "../services/util";
 
@@ -6946,6 +7035,7 @@ export const labController = withErrorCodes({
     samples: (b: Booking, _: unknown, ctx: Ctx) => ctx.services.bookings.samplesOf(b.id),
     reports: (b: Booking, _: unknown, ctx: Ctx) => (canSee(ctx, "report:read", b.branchId) ? ctx.services.reports.ofBooking(b.id) : []),
     invoice: (b: Booking, _: unknown, ctx: Ctx) => (canSee(ctx, "invoice:read", b.branchId) ? ctx.loaders.invoice.load(b.invoiceId) : null),
+    invoices: (b: Booking, _: unknown, ctx: Ctx) => (canSee(ctx, "invoice:read", b.branchId) ? ctx.services.bookings.invoicesOf(b) : []),
   },
   BookingTest: {
     catalog: (t: BookingTest) => getTestByCode(t.testCode) ?? null,
@@ -6968,7 +7058,25 @@ export const labController = withErrorCodes({
     createDoctor: (_: unknown, { input }: { input: DoctorInput }, ctx: Ctx) => ctx.services.patients.createDoctor(authorize(ctx, "doctor:manage"), input),
     updateDoctor: (_: unknown, a: { id: string; input: Partial<DoctorInput> }, ctx: Ctx) => ctx.services.patients.updateDoctor(authorize(ctx, "doctor:manage"), a.id, a.input),
 
-    createBooking: (_: unknown, { input }: { input: CreateBookingInput }, ctx: Ctx) => ctx.services.bookings.create(authorize(ctx, "booking:create", input.branchId), input),
+    createBooking: (_: unknown, { input }: { input: CreateBookingInput }, ctx: Ctx) => {
+      const actor = authorize(ctx, "booking:create", input.branchId);
+      if (input.bill) {
+        authorize(ctx, "invoice:create", input.branchId);
+        if ((input.bill.billDiscountPaise ?? 0) > 0) authorize(ctx, "invoice:discount", input.branchId);
+        if (input.bill.payments?.length) authorize(ctx, "payment:create", input.branchId);
+      }
+      return ctx.services.bookings.create(actor, input);
+    },
+    updateBooking: async (_: unknown, a: { id: string; input: UpdateBookingInput }, ctx: Ctx) => {
+      const b = await ctx.services.bookings.get(actorOf(ctx), a.id);
+      const actor = authorize(ctx, "booking:update", b.branchId);
+      const impact = await ctx.services.bookings.impact(actor, b, a.input);
+      if (impact.cancels) authorize(ctx, "invoice:cancel", b.branchId);
+      if (impact.cancels || impact.issues) authorize(ctx, "invoice:create", b.branchId);
+      if (impact.credits) authorize(ctx, "accounts:post", b.branchId);
+      const r = await ctx.services.bookings.update(actor, b, a.input);
+      return { booking: r.booking, samples: r.samples, issuedInvoices: r.issued, cancelledInvoices: r.cancelled, creditNotes: r.creditNotes, refundablePaise: r.refundablePaise };
+    },
     cancelBooking: async (_: unknown, a: { id: string }, ctx: Ctx) => {
       const b = await ctx.services.bookings.get(actorOf(ctx), a.id);
       return ctx.services.bookings.cancel(authorize(ctx, "booking:cancel", b.branchId), a.id);
@@ -9411,7 +9519,10 @@ export const labTypeDefs = /* GraphQL */ `
     sampleCollection: SampleCollection!
     samples: [Sample!]!
     reports: [Report!]!
+    "The booking's current invoice (the first one that is not cancelled)."
     invoice: Invoice
+    "Every invoice issued for the booking, oldest first: its first one, replacements, and invoices for tests added after it was paid."
+    invoices: [Invoice!]!
     notes: String
     createdAt: DateTime!
   }
@@ -9443,7 +9554,25 @@ export const labTypeDefs = /* GraphQL */ `
     updatedAt: DateTime!
   }
 
-  type CreateBookingResult { booking: Booking!, samples: [Sample!]! }
+  type CreateBookingResult {
+    booking: Booking!
+    samples: [Sample!]!
+    "Issued with the booking when input.bill is given."
+    invoice: Invoice
+  }
+
+  type UpdateBookingResult {
+    booking: Booking!
+    samples: [Sample!]!
+    "Invoices issued by the change: a replacement for an unpaid invoice, or one for tests added after payment."
+    issuedInvoices: [Invoice!]!
+    "Unpaid invoices cancelled by the change (replaced, or no longer needed)."
+    cancelledInvoices: [Invoice!]!
+    "Credit notes for removed tests on invoices that were paid or already credited."
+    creditNotes: [CreditNote!]!
+    "Money paid that can now be refunded (refundPayment on the invoice)."
+    refundablePaise: Int!
+  }
 
   extend type Query {
     patient(id: ID!): Patient
@@ -9473,6 +9602,30 @@ export const labTypeDefs = /* GraphQL */ `
     collectionType: CollectionType = walk_in
     scheduledAt: DateTime
     notes: String
+    "Bill at once: an invoice for the booked tests, in the same transaction (needs invoice:create; a discount needs invoice:discount, payments payment:create)."
+    bill: BookingBillInput
+  }
+
+  input BookingBillInput {
+    billDiscountPaise: Int = 0
+    "Taken at the counter with the booking."
+    payments: [PaymentInput!]
+    "Fill HSN/SAC, taxability and GST rate from the tax rules."
+    applyTaxRules: Boolean = false
+  }
+
+  """
+  Changes to a booking; fields left out stay as they are. doctorId: null removes the doctor, scheduledAt: null
+  and collectionAddress: null clear them. Tests can be removed only while they have no results.
+  """
+  input UpdateBookingInput {
+    doctorId: ID
+    collectionType: CollectionType
+    scheduledAt: DateTime
+    collectionAddress: AddressInput
+    notes: String
+    addTests: [BookingTestInput!]
+    removeTestCodes: [String!]
   }
 
   "Unit, range and flag are filled from catalog-kit when omitted and the test is in the catalog."
@@ -9485,6 +9638,13 @@ export const labTypeDefs = /* GraphQL */ `
     updateDoctor(id: ID!, input: DoctorPatch!): Doctor!
 
     createBooking(input: CreateBookingInput!): CreateBookingResult!
+    """
+    Edits a booking (booking:update): doctor, collection details, notes, tests. Samples follow the tests. Billing
+    follows too: an unpaid invoice is cancelled and issued again (invoice:cancel when tests are removed,
+    invoice:create), a paid one gets a credit note for removed tests (accounts:post) and an invoice for added ones
+    (invoice:create). One transaction, audited as booking.update.
+    """
+    updateBooking(id: ID!, input: UpdateBookingInput!): UpdateBookingResult!
     cancelBooking(id: ID!): Booking!
     "Marks the sample collected. barcode: the tube's own label, when it is not the generated one (unique in the organisation)."
     collectSample(id: ID!, barcode: String): Sample!
@@ -10070,8 +10230,13 @@ export class BillingService {
 
 ```ts
 import { getTestByCode } from "@mgpl-diagnostics/catalog-kit";
-import { ConflictError, createBooking, ValidationError, type BookingStatus, type BookingTest, type CollectionType, type Id, type Repositories, type Sample } from "@mgpl-diagnostics/db-kit";
+import {
+  cancelInvoice, ConflictError, counterKeys, createBooking, dayKey, formatSampleBarcode, issueInvoice, ValidationError,
+  type Address, type Booking, type BookingStatus, type BookingTest, type CollectionType, type CreditNote, type Id, type Invoice, type ItemInput, type Repositories, type Sample,
+} from "@mgpl-diagnostics/db-kit";
+import { applyTaxRules, issueCreditNote } from "@mgpl-diagnostics/finance-kit";
 import type { Actor } from "../graphql/context";
+import { invoiceItem, type PaymentInput } from "./billing.service";
 import { clean, mustOwn, owned, scopedFind } from "./util";
 
 export interface BookingTestInput {
@@ -10089,7 +10254,57 @@ export interface CreateBookingInput {
   collectionType?: CollectionType | null;
   scheduledAt?: Date | null;
   notes?: string | null;
+  /** Bill the booking at once: an invoice for its tests, in the same transaction (needs invoice:create). */
+  bill?: BookingBillInput | null;
 }
+
+export interface BookingBillInput {
+  billDiscountPaise?: number | null;
+  payments?: PaymentInput[] | null;
+  applyTaxRules?: boolean | null;
+}
+
+/** Changes to a booking. Fields left out stay as they are; doctorId: null removes the doctor. */
+export interface UpdateBookingInput {
+  doctorId?: Id | null;
+  collectionType?: CollectionType | null;
+  scheduledAt?: Date | null;
+  collectionAddress?: Address | null;
+  notes?: string | null;
+  addTests?: BookingTestInput[] | null;
+  removeTestCodes?: string[] | null;
+}
+
+export interface UpdateBookingResult {
+  booking: Booking;
+  samples: Sample[];
+  /** Invoices issued by this change (a replacement, or one for the added tests). */
+  issued: Invoice[];
+  /** Invoices cancelled by this change (unpaid ones, replaced or no longer needed). */
+  cancelled: Invoice[];
+  /** Credit notes for removed tests on invoices that were paid or already credited. */
+  creditNotes: CreditNote[];
+  /** Paid money the patient can now be refunded (Refund on the invoice). */
+  refundablePaise: number;
+}
+
+/**
+ * What an edit does to billing, so the caller can check permissions before anything changes:
+ * removing a billed test cancels/replaces an unpaid invoice (invoice:cancel) or credits a paid one
+ * (accounts:post); adding tests to a billed booking issues an invoice (invoice:create).
+ */
+export interface BillingImpact { cancels: boolean; credits: boolean; issues: boolean }
+
+/** An invoice line for a booked test. */
+export const testItem = (t: BookingTest): ItemInput => invoiceItem({ code: t.testCode, name: t.name, ratePaise: t.pricePaise, category: "test" });
+
+const itemInput = (i: Invoice["items"][number]): ItemInput =>
+  clean({ code: i.code, name: i.name, category: i.category, qty: i.qty, ratePaise: i.ratePaise, discountPaise: i.discountPaise, taxPercent: i.taxPercent, hsnSac: i.hsnSac, taxability: i.taxability }) as ItemInput;
+
+/** The bill discount an invoice carried (its total discount less the line discounts). */
+const billDiscountOf = (inv: Invoice) => Math.max(0, inv.discountPaise - inv.items.reduce((s, x) => s + (x.discountPaise ?? 0), 0));
+
+const EDITABLE: BookingStatus[] = ["booked", "sample_collected", "in_process"];
 
 /**
  * A test line from catalog-kit when only the code is given: name, price (MRP, rupees → paise) and
@@ -10131,12 +10346,30 @@ export class BookingService {
     mustOwn(await this.repos.branches.get(input.branchId), actor.orgId, "Branch", input.branchId);
     mustOwn(await this.repos.patients.get(input.patientId), actor.orgId, "Patient", input.patientId);
     if (input.doctorId) mustOwn(await this.repos.doctors.get(input.doctorId), actor.orgId, "Doctor", input.doctorId);
-    return createBooking(this.repos, {
+    const tests = input.tests.map(bookingTest);
+    const bill = input.bill;
+    if (!bill) return { ...(await this.book(this.repos, actor, input, tests)), invoice: null };
+    // the invoice is worked out before anything is written, so a bad discount or payment fails the whole request
+    let items = tests.map(testItem);
+    if (bill.applyTaxRules) items = await applyTaxRules(this.repos, actor.orgId, items);
+    return this.repos.transaction(async (tx) => {
+      const made = await this.book(tx, actor, input, tests);
+      const { invoice } = await issueInvoice(tx, {
+        orgId: actor.orgId, branchId: input.branchId, patientId: input.patientId, bookingId: made.booking.id,
+        items, billDiscountPaise: bill.billDiscountPaise ?? 0,
+        payments: bill.payments?.map((p) => clean({ amountPaise: p.amountPaise, mode: p.mode, reference: p.reference }) as never),
+      }, actor.userId);
+      return { booking: { ...made.booking, invoiceId: invoice.id }, samples: made.samples, invoice };
+    });
+  }
+
+  private book(repos: Repositories, actor: Actor, input: CreateBookingInput, tests: BookingTest[]) {
+    return createBooking(repos, {
       orgId: actor.orgId,
       branchId: input.branchId,
       patientId: input.patientId,
       doctorId: input.doctorId ?? null,
-      tests: input.tests.map(bookingTest),
+      tests,
       sampleCollection: { type: input.collectionType ?? "walk_in", scheduledAt: input.scheduledAt ?? null },
       notes: input.notes ?? undefined,
     }, actor.userId);
@@ -10145,13 +10378,174 @@ export class BookingService {
   async cancel(actor: Actor, id: Id) {
     const b = await this.get(actor, id);
     if (b.status === "cancelled") return b;
-    if (b.invoiceId) {
-      const inv = await this.repos.invoices.get(b.invoiceId);
-      if (inv && inv.status !== "cancelled") throw new ConflictError("Cancel the booking's invoice first");
-    }
+    if ((await this.invoicesOf(b)).some((i) => i.status !== "cancelled")) throw new ConflictError("Cancel the booking's invoice first");
     const out = await this.repos.bookings.update(id, { status: "cancelled" });
     await this.repos.audit.log({ orgId: b.orgId, branchId: b.branchId, userId: actor.userId, action: "booking.cancel", entity: "booking", entityId: id });
     return out!;
+  }
+
+
+  /** Every invoice issued for the booking (its first one, and any for tests added later), oldest first. */
+  async invoicesOf(b: Pick<Booking, "id" | "orgId" | "invoiceId">, repos: Repositories = this.repos): Promise<Invoice[]> {
+    const found = await repos.invoices.find({ orgId: b.orgId, bookingId: b.id }, { sort: { field: "createdAt", dir: "asc" } });
+    if (b.invoiceId && !found.some((i) => i.id === b.invoiceId)) {
+      const inv = await repos.invoices.get(b.invoiceId);
+      if (inv) found.unshift(inv);
+    }
+    return found;
+  }
+
+  /** Checks an edit and says what it would do to billing (nothing is written). */
+  async impact(actor: Actor, b: Booking, input: UpdateBookingInput): Promise<BillingImpact> {
+    const { added, removed } = this.checkEdit(b, input);
+    const live = (await this.invoicesOf(b)).filter((i) => i.status !== "cancelled");
+    const billed = (code: string) => live.find((i) => i.items.some((x) => x.code === code));
+    const touched = new Set(removed.map((t) => billed(t.testCode)).filter((i): i is Invoice => !!i));
+    let cancels = false;
+    let credits = false;
+    for (const inv of touched) if (await this.replaceable(inv)) cancels = true; else credits = true;
+    return { cancels, credits, issues: added.length > 0 && live.length > 0 };
+  }
+
+  /** An invoice can be cancelled and issued again only while nothing was paid or credited on it. */
+  private async replaceable(inv: Invoice, repos: Repositories = this.repos) {
+    if (inv.paidPaise > 0 || inv.creditedPaise > 0) return false;
+    return (await repos.creditNotes.find({ invoiceId: inv.id, status: "issued" })).length === 0;
+  }
+
+  private checkEdit(b: Booking, input: UpdateBookingInput) {
+    if (!EDITABLE.includes(b.status)) throw new ConflictError(`Booking ${b.bookingNo} is ${b.status.replace("_", " ")}: it can no longer change`);
+    const removeCodes = [...new Set((input.removeTestCodes ?? []).map((c) => c.trim()))];
+    for (const c of removeCodes) if (!b.tests.some((t) => t.testCode === c)) throw new ValidationError(`Test ${c} is not on booking ${b.bookingNo}`);
+    const added = (input.addTests ?? []).map(bookingTest);
+    const codes = new Set(b.tests.filter((t) => !removeCodes.includes(t.testCode)).map((t) => t.testCode));
+    for (const t of added) {
+      if (codes.has(t.testCode)) throw new ValidationError(`Test ${t.testCode} is already on the booking`);
+      codes.add(t.testCode);
+    }
+    if (!codes.size) throw new ValidationError("A booking needs at least one test; cancel it instead");
+    const removed = b.tests.filter((t) => removeCodes.includes(t.testCode));
+    return { added, removed };
+  }
+
+  /**
+   * Changes the doctor, the collection details or the notes, adds tests and removes tests that have no
+   * results yet. Samples follow the sample types (new tubes for new types; tubes not collected yet are
+   * dropped when no test needs them). Billing follows the tests: an unpaid invoice is cancelled and issued
+   * again; a paid one gets a credit note for removed tests, and added tests get an invoice of their own.
+   * One transaction; audited as booking.update.
+   */
+  async update(actor: Actor, b: Booking, input: UpdateBookingInput): Promise<UpdateBookingResult> {
+    const { added, removed } = this.checkEdit(b, input);
+    if (input.doctorId) mustOwn(await this.repos.doctors.get(input.doctorId), actor.orgId, "Doctor", input.doctorId);
+    const removedCodes = removed.map((t) => t.testCode);
+    const reports = (await this.repos.reports.find({ bookingId: b.id })).filter((r) => removedCodes.includes(r.testCode));
+    const started = reports.find((r) => r.status !== "draft" || r.results.length > 0);
+    if (started) throw new ConflictError(`${started.testName} already has results: it can't be removed from the booking`);
+    const tests = [...b.tests.filter((t) => !removedCodes.includes(t.testCode)), ...added];
+    // tax rules for added lines, worked out before writing (missing rules fail the request, not half of it)
+    const addedItems = added.map(testItem);
+
+    return this.repos.transaction(async (tx) => {
+      const patch: Partial<Booking> = {};
+      const changes: Record<string, unknown> = {};
+      if (input.doctorId !== undefined && (input.doctorId ?? null) !== (b.doctorId ?? null)) {
+        patch.doctorId = input.doctorId ?? null;
+        changes.doctor = { from: b.doctorId ?? null, to: patch.doctorId };
+      }
+      if (input.collectionType != null || input.scheduledAt !== undefined || input.collectionAddress !== undefined) {
+        const sc = { ...b.sampleCollection };
+        if (input.collectionType != null) sc.type = input.collectionType;
+        if (input.scheduledAt !== undefined) sc.scheduledAt = input.scheduledAt ?? null;
+        if (input.collectionAddress !== undefined) {
+          if (input.collectionAddress) sc.address = clean(input.collectionAddress) as Address;
+          else delete sc.address;
+        }
+        patch.sampleCollection = sc;
+        changes.collection = true;
+      }
+      if (input.notes !== undefined) {
+        patch.notes = input.notes?.trim() || undefined;
+        changes.notes = true;
+      }
+      if (added.length || removed.length) {
+        patch.tests = tests;
+        changes.added = added.map((t) => t.testCode);
+        changes.removed = removedCodes;
+      }
+
+      // reports opened for removed tests hold no results (checked above): drop them
+      for (const r of reports) await tx.reports.delete(r.id);
+
+      // samples: one tube per sample type still needed
+      const samples = await tx.samples.find({ bookingId: b.id });
+      const types = new Set(tests.map((t) => t.sampleType ?? "OTHER"));
+      for (const s of samples) if (!types.has(s.sampleType) && s.status === "pending") await tx.samples.delete(s.id);
+      const now = new Date();
+      for (const type of types) {
+        if (samples.some((s) => s.sampleType === type && s.status !== "rejected")) continue;
+        const n = await tx.counters.next(counterKeys.sample(b.orgId));
+        await tx.samples.create({
+          orgId: b.orgId, branchId: b.branchId, bookingId: b.id, sampleType: type, status: "pending",
+          barcode: formatSampleBarcode(dayKey(now).slice(0, 2), n), collectedAt: null, collectedBy: null, receivedAt: null, rejectReason: null,
+        } as never);
+      }
+
+      // billing
+      const result = { issued: [] as Invoice[], cancelled: [] as Invoice[], creditNotes: [] as CreditNote[], refundablePaise: 0 };
+      const live = (await this.invoicesOf(b, tx)).filter((i) => i.status !== "cancelled");
+      let primary = live.find((i) => i.id === b.invoiceId) ?? live[0] ?? null;
+      let toAdd = addedItems;
+      if (live.length) {
+        const usesTaxRules = live.some((i) => i.items.some((x) => x.taxability));
+        if (usesTaxRules && toAdd.length) toAdd = await applyTaxRules(tx, b.orgId, toAdd);
+        const reason = `Booking ${b.bookingNo} changed${removedCodes.length ? `: removed ${removed.map((t) => t.name).join(", ")}` : ""}`;
+        for (const inv of live) {
+          const gone = inv.items.map((x, i) => ({ x, i })).filter(({ x }) => x.code && removedCodes.includes(x.code));
+          const extra = inv.id === primary?.id ? toAdd : [];
+          if (!gone.length && !extra.length) continue;
+          if (await this.replaceable(inv, tx)) {
+            const keep = inv.items.filter((x) => !(x.code && removedCodes.includes(x.code))).map(itemInput);
+            const items = [...keep, ...extra];
+            await cancelInvoice(tx, inv.id, reason, actor.userId);
+            result.cancelled.push({ ...inv, status: "cancelled" });
+            if (inv.id === primary?.id) toAdd = [];
+            if (!items.length) {
+              if (inv.id === primary?.id) primary = null;
+              continue;
+            }
+            const subtotal = items.reduce((s, x) => s + Math.max(0, Math.round((x.qty ?? 1) * x.ratePaise) - (x.discountPaise ?? 0)), 0);
+            const { invoice } = await issueInvoice(tx, {
+              orgId: inv.orgId, branchId: inv.branchId, patientId: inv.patientId, bookingId: b.id,
+              customerId: inv.customerId ?? null, placeOfSupply: inv.placeOfSupply ?? null, buyerGstin: inv.buyerGstin ?? null,
+              items, billDiscountPaise: Math.min(billDiscountOf(inv), subtotal),
+            }, actor.userId);
+            result.issued.push(invoice);
+            if (inv.id === primary?.id) primary = invoice;
+          } else if (gone.length) {
+            const r = await issueCreditNote(tx, { orgId: b.orgId, invoiceId: inv.id, reason, lines: gone.map(({ i }) => ({ itemIndex: i })) }, actor.userId);
+            result.creditNotes.push(r.creditNote);
+            result.refundablePaise += r.refundablePaise;
+          }
+        }
+        if (toAdd.length) {
+          // the first invoice was paid or credited: the added tests get an invoice of their own
+          const base = primary ?? live[0]!;
+          const { invoice } = await issueInvoice(tx, {
+            orgId: base.orgId, branchId: base.branchId, patientId: base.patientId, bookingId: b.id,
+            customerId: base.customerId ?? null, placeOfSupply: base.placeOfSupply ?? null, buyerGstin: base.buyerGstin ?? null, items: toAdd,
+          }, actor.userId);
+          result.issued.push(invoice);
+          primary ??= invoice;
+        }
+      }
+      // issueInvoice/cancelInvoice point the booking at the invoice they touched; keep it on the first live one
+      patch.invoiceId = primary?.id ?? null;
+
+      const booking = (await tx.bookings.update(b.id, patch))!;
+      await tx.audit.log({ orgId: b.orgId, branchId: b.branchId, userId: actor.userId, action: "booking.update", entity: "booking", entityId: b.id, data: changes });
+      return { booking, samples: await tx.samples.find({ bookingId: b.id }, { sort: { field: "barcode" } }), ...result };
+    });
   }
 
   // ---------------------------------------------------------------- samples
@@ -12784,6 +13178,57 @@ async function suite(db: Db, tag: string) {
     await gql(owner, 'mutation($id: ID!) { cancelInvoice(id: $id, reason: "Duplicate bill") { id } }', { id: ci });
     const chtml = (await gql(owner, "query($id: ID!) { invoiceDocument(invoiceId: $id, format: html) { html } }", { id: ci })).data?.invoiceDocument.html ?? "";
     ok(/CANCELLED/.test(chtml) && !/Scan to pay/.test(chtml), `[${tag}] a cancelled invoice prints CANCELLED and asks for no payment`);
+  }
+
+  // ---------------------------------------------------------------- booking edits and billing at booking
+  {
+    const BK = "booking { id status doctor { id } tests { testCode } sampleCollection { type scheduledAt address { line1 } } invoice { id status items { code } } invoices { id status } samples { sampleType status } }";
+    const UPD = `mutation($id: ID!, $i: UpdateBookingInput!) { updateBooking(id: $id, input: $i) { ${BK} issuedInvoices { id items { code } totalPaise } cancelledInvoices { id } creditNotes { id totalPaise } refundablePaise } }`;
+    // billing at booking (C2): one request books the tests and issues the invoice with the payment taken
+    const billed = await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id invoice { id } } samples { id } invoice { id status totalPaise paidPaise } } }", {
+      i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }, { testCode: "LIFT" }], bill: { payments: [{ amountPaise: 104800, mode: "cash" }] } },
+    });
+    const bb = billed.data?.createBooking;
+    ok(bb?.invoice?.status === "paid" && bb.invoice.totalPaise === 104800 && bb.booking.invoice?.id === bb.invoice.id && bb.samples.length === 2, `[${tag}] createBooking with bill: booking, samples and a paid invoice in one request`);
+    ok(code(await gql(desk, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }], bill: { billDiscountPaise: 100 } } })) === "FORBIDDEN", `[${tag}] a discount at booking needs invoice:discount`);
+    const tooMuch = await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "ESR" }], bill: { payments: [{ amountPaise: 999999, mode: "cash" }] } } });
+    const esrBookings = (await gql(owner, "query($p: ID!) { bookings(patientId: $p, limit: 200) { tests { testCode } } }", { p: patientId })).data?.bookings.filter((b: any) => b.tests.some((t: any) => t.testCode === "ESR")) ?? [];
+    ok(code(tooMuch) === "CONFLICT" && esrBookings.length === 0, `[${tag}] a bad payment at booking fails the whole request (no booking left behind)`);
+
+    // an unpaid invoice is cancelled and issued again with the new tests
+    const doc2 = (await gql(owner, 'mutation { createDoctor(input: { name: "dr meera iyer" }) { id } }')).data?.createDoctor.id;
+    const ub = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }, { testCode: "ESR" }] } })).data?.createBooking.booking.id;
+    const first = (await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, bookingId: ub, items: [{ code: "CBC" }, { code: "ESR" }] } })).data?.issueInvoice.id;
+    ok(code(await gql(desk, UPD, { id: ub, i: { removeTestCodes: ["ESR"] } })) === "FORBIDDEN", `[${tag}] removing a billed test needs invoice:cancel (front desk can't)`);
+    const r1 = (await gql(owner, UPD, { id: ub, i: { doctorId: doc2, collectionType: "home", collectionAddress: { line1: "12 Civil Lines" }, addTests: [{ testCode: "TSH" }], removeTestCodes: ["CBC", "ESR"] } })).data?.updateBooking;
+    ok(r1?.booking.tests.map((t: any) => t.testCode).join() === "TSH" && r1.booking.doctor?.id === doc2 && r1.booking.sampleCollection.type === "home" && r1.booking.sampleCollection.address?.line1 === "12 Civil Lines", `[${tag}] updateBooking: tests, doctor and home collection changed`);
+    ok(r1?.booking.samples.length === 1 && r1.booking.samples[0].sampleType === "SERUM", `[${tag}] …the EDTA tube nobody needs is dropped and a serum tube added`);
+    ok(r1?.cancelledInvoices[0]?.id === first && r1.issuedInvoices.length === 1 && r1.issuedInvoices[0].items.map((x: any) => x.code).join() === "TSH" && r1.booking.invoice?.id === r1.issuedInvoices[0].id, `[${tag}] …the unpaid invoice is cancelled and issued again for TSH`);
+    ok(code(await gql(owner, UPD, { id: ub, i: { removeTestCodes: ["TSH"] } })) === "BAD_USER_INPUT", `[${tag}] the last test can't be removed (cancel the booking instead)`);
+    ok(code(await gql(owner, UPD, { id: ub, i: { addTests: [{ testCode: "TSH" }] } })) === "BAD_USER_INPUT", `[${tag}] a test already on the booking can't be added twice`);
+    ok((await gql(owner, UPD, { id: ub, i: { doctorId: null } })).data?.updateBooking.booking.doctor === null, `[${tag}] doctorId: null removes the doctor`);
+
+    // a paid invoice gets a credit note for the removed test and a new invoice for the added one
+    const r2 = (await gql(owner, UPD, { id: bb.booking.id, i: { removeTestCodes: ["LIFT"], addTests: [{ testCode: "TSH" }] } })).data?.updateBooking;
+    ok(r2?.creditNotes.length === 1 && r2.creditNotes[0].totalPaise === 64900 && r2.refundablePaise === 64900, `[${tag}] removing a paid test issues a credit note (Rs 649 refundable)`);
+    ok(r2?.issuedInvoices.length === 1 && r2.issuedInvoices[0].totalPaise === 24900 && r2.cancelledInvoices.length === 0 && r2.booking.invoice?.id === bb.invoice.id && r2.booking.invoices.length === 2, `[${tag}] …the added test gets its own invoice; the paid one stays the booking's invoice`);
+    ok(code(await gql(desk, UPD, { id: bb.booking.id, i: { removeTestCodes: ["CBC"] } })) === "FORBIDDEN", `[${tag}] crediting a paid test needs accounts:post`);
+    ok(code(await gql(owner, "mutation($id: ID!) { cancelBooking(id: $id) { id } }", { id: bb.booking.id })) === "CONFLICT", `[${tag}] a booking with live invoices can't be cancelled`);
+    const tb2 = await gql(owner, "{ trialBalance { differencePaise } }");
+    ok(tb2.data?.trialBalance.differencePaise === 0, `[${tag}] the books still balance after booking edits`);
+
+    // results lock a test in; finished bookings don't change
+    const rb = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } samples { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }, { testCode: "ESR" }] } })).data?.createBooking;
+    const rr = (await gql(owner, 'mutation($b: ID!) { createReport(bookingId: $b, testCode: "CBC") { id } }', { b: rb.booking.id })).data?.createReport.id;
+    await gql(owner, "mutation($r: ID!, $x: [ResultInput!]!) { saveResults(reportId: $r, results: $x) { id } }", { r: rr, x: [{ parameter: "Hemoglobin", value: "13.1" }] });
+    ok(code(await gql(owner, UPD, { id: rb.booking.id, i: { removeTestCodes: ["CBC"] } })) === "CONFLICT", `[${tag}] a test with results can't be removed`);
+    await gql(owner, 'mutation($b: ID!) { createReport(bookingId: $b, testCode: "ESR") { id } }', { b: rb.booking.id });
+    const r3 = (await gql(owner, UPD, { id: rb.booking.id, i: { removeTestCodes: ["ESR"] } })).data?.updateBooking;
+    ok(r3?.booking.tests.length === 1 && r3.booking.samples.length === 1, `[${tag}] …but one with an empty report can (the report is dropped; the EDTA tube stays for CBC)`);
+    ok(code(await gql(owner, UPD, { id: booking.booking.id, i: { notes: "x" } })) === "CONFLICT", `[${tag}] a completed booking can't be edited`);
+    ok(code(await gql(otherOwner, UPD, { id: rb.booking.id, i: { notes: "x" } })) === "NOT_FOUND", `[${tag}] another organisation can't edit it`);
+    const audit = (await gql(owner, "query($id: ID!) { auditLog(entity: \"booking\", entityId: $id) { action } }", { id: ub })).data?.auditLog ?? [];
+    ok(audit.filter((x: any) => x.action === "booking.update").length === 2, `[${tag}] each edit is audited (booking.update)`);
   }
 
   const anyDoc = await gql(owner, '{ renderReport(request: { sample: "cbc" }, format: html) { html } invoiceTotals(request: { invoice: { invoiceNo: "T-1", patient: { name: "Kavita Sharma", age: 32, sex: "Female" }, items: ["cbc"] } }) reportTemplates { templates { id } } }');

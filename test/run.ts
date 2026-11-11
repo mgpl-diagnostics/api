@@ -205,6 +205,57 @@ async function suite(db: Db, tag: string) {
     ok(/CANCELLED/.test(chtml) && !/Scan to pay/.test(chtml), `[${tag}] a cancelled invoice prints CANCELLED and asks for no payment`);
   }
 
+  // ---------------------------------------------------------------- booking edits and billing at booking
+  {
+    const BK = "booking { id status doctor { id } tests { testCode } sampleCollection { type scheduledAt address { line1 } } invoice { id status items { code } } invoices { id status } samples { sampleType status } }";
+    const UPD = `mutation($id: ID!, $i: UpdateBookingInput!) { updateBooking(id: $id, input: $i) { ${BK} issuedInvoices { id items { code } totalPaise } cancelledInvoices { id } creditNotes { id totalPaise } refundablePaise } }`;
+    // billing at booking (C2): one request books the tests and issues the invoice with the payment taken
+    const billed = await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id invoice { id } } samples { id } invoice { id status totalPaise paidPaise } } }", {
+      i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }, { testCode: "LIFT" }], bill: { payments: [{ amountPaise: 104800, mode: "cash" }] } },
+    });
+    const bb = billed.data?.createBooking;
+    ok(bb?.invoice?.status === "paid" && bb.invoice.totalPaise === 104800 && bb.booking.invoice?.id === bb.invoice.id && bb.samples.length === 2, `[${tag}] createBooking with bill: booking, samples and a paid invoice in one request`);
+    ok(code(await gql(desk, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }], bill: { billDiscountPaise: 100 } } })) === "FORBIDDEN", `[${tag}] a discount at booking needs invoice:discount`);
+    const tooMuch = await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "ESR" }], bill: { payments: [{ amountPaise: 999999, mode: "cash" }] } } });
+    const esrBookings = (await gql(owner, "query($p: ID!) { bookings(patientId: $p, limit: 200) { tests { testCode } } }", { p: patientId })).data?.bookings.filter((b: any) => b.tests.some((t: any) => t.testCode === "ESR")) ?? [];
+    ok(code(tooMuch) === "CONFLICT" && esrBookings.length === 0, `[${tag}] a bad payment at booking fails the whole request (no booking left behind)`);
+
+    // an unpaid invoice is cancelled and issued again with the new tests
+    const doc2 = (await gql(owner, 'mutation { createDoctor(input: { name: "dr meera iyer" }) { id } }')).data?.createDoctor.id;
+    const ub = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }, { testCode: "ESR" }] } })).data?.createBooking.booking.id;
+    const first = (await gql(owner, "mutation($i: IssueInvoiceInput!) { issueInvoice(input: $i) { id } }", { i: { branchId: a.branch.id, patientId, bookingId: ub, items: [{ code: "CBC" }, { code: "ESR" }] } })).data?.issueInvoice.id;
+    ok(code(await gql(desk, UPD, { id: ub, i: { removeTestCodes: ["ESR"] } })) === "FORBIDDEN", `[${tag}] removing a billed test needs invoice:cancel (front desk can't)`);
+    const r1 = (await gql(owner, UPD, { id: ub, i: { doctorId: doc2, collectionType: "home", collectionAddress: { line1: "12 Civil Lines" }, addTests: [{ testCode: "TSH" }], removeTestCodes: ["CBC", "ESR"] } })).data?.updateBooking;
+    ok(r1?.booking.tests.map((t: any) => t.testCode).join() === "TSH" && r1.booking.doctor?.id === doc2 && r1.booking.sampleCollection.type === "home" && r1.booking.sampleCollection.address?.line1 === "12 Civil Lines", `[${tag}] updateBooking: tests, doctor and home collection changed`);
+    ok(r1?.booking.samples.length === 1 && r1.booking.samples[0].sampleType === "SERUM", `[${tag}] …the EDTA tube nobody needs is dropped and a serum tube added`);
+    ok(r1?.cancelledInvoices[0]?.id === first && r1.issuedInvoices.length === 1 && r1.issuedInvoices[0].items.map((x: any) => x.code).join() === "TSH" && r1.booking.invoice?.id === r1.issuedInvoices[0].id, `[${tag}] …the unpaid invoice is cancelled and issued again for TSH`);
+    ok(code(await gql(owner, UPD, { id: ub, i: { removeTestCodes: ["TSH"] } })) === "BAD_USER_INPUT", `[${tag}] the last test can't be removed (cancel the booking instead)`);
+    ok(code(await gql(owner, UPD, { id: ub, i: { addTests: [{ testCode: "TSH" }] } })) === "BAD_USER_INPUT", `[${tag}] a test already on the booking can't be added twice`);
+    ok((await gql(owner, UPD, { id: ub, i: { doctorId: null } })).data?.updateBooking.booking.doctor === null, `[${tag}] doctorId: null removes the doctor`);
+
+    // a paid invoice gets a credit note for the removed test and a new invoice for the added one
+    const r2 = (await gql(owner, UPD, { id: bb.booking.id, i: { removeTestCodes: ["LIFT"], addTests: [{ testCode: "TSH" }] } })).data?.updateBooking;
+    ok(r2?.creditNotes.length === 1 && r2.creditNotes[0].totalPaise === 64900 && r2.refundablePaise === 64900, `[${tag}] removing a paid test issues a credit note (Rs 649 refundable)`);
+    ok(r2?.issuedInvoices.length === 1 && r2.issuedInvoices[0].totalPaise === 24900 && r2.cancelledInvoices.length === 0 && r2.booking.invoice?.id === bb.invoice.id && r2.booking.invoices.length === 2, `[${tag}] …the added test gets its own invoice; the paid one stays the booking's invoice`);
+    ok(code(await gql(desk, UPD, { id: bb.booking.id, i: { removeTestCodes: ["CBC"] } })) === "FORBIDDEN", `[${tag}] crediting a paid test needs accounts:post`);
+    ok(code(await gql(owner, "mutation($id: ID!) { cancelBooking(id: $id) { id } }", { id: bb.booking.id })) === "CONFLICT", `[${tag}] a booking with live invoices can't be cancelled`);
+    const tb2 = await gql(owner, "{ trialBalance { differencePaise } }");
+    ok(tb2.data?.trialBalance.differencePaise === 0, `[${tag}] the books still balance after booking edits`);
+
+    // results lock a test in; finished bookings don't change
+    const rb = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } samples { id } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "CBC" }, { testCode: "ESR" }] } })).data?.createBooking;
+    const rr = (await gql(owner, 'mutation($b: ID!) { createReport(bookingId: $b, testCode: "CBC") { id } }', { b: rb.booking.id })).data?.createReport.id;
+    await gql(owner, "mutation($r: ID!, $x: [ResultInput!]!) { saveResults(reportId: $r, results: $x) { id } }", { r: rr, x: [{ parameter: "Hemoglobin", value: "13.1" }] });
+    ok(code(await gql(owner, UPD, { id: rb.booking.id, i: { removeTestCodes: ["CBC"] } })) === "CONFLICT", `[${tag}] a test with results can't be removed`);
+    await gql(owner, 'mutation($b: ID!) { createReport(bookingId: $b, testCode: "ESR") { id } }', { b: rb.booking.id });
+    const r3 = (await gql(owner, UPD, { id: rb.booking.id, i: { removeTestCodes: ["ESR"] } })).data?.updateBooking;
+    ok(r3?.booking.tests.length === 1 && r3.booking.samples.length === 1, `[${tag}] …but one with an empty report can (the report is dropped; the EDTA tube stays for CBC)`);
+    ok(code(await gql(owner, UPD, { id: booking.booking.id, i: { notes: "x" } })) === "CONFLICT", `[${tag}] a completed booking can't be edited`);
+    ok(code(await gql(otherOwner, UPD, { id: rb.booking.id, i: { notes: "x" } })) === "NOT_FOUND", `[${tag}] another organisation can't edit it`);
+    const audit = (await gql(owner, "query($id: ID!) { auditLog(entity: \"booking\", entityId: $id) { action } }", { id: ub })).data?.auditLog ?? [];
+    ok(audit.filter((x: any) => x.action === "booking.update").length === 2, `[${tag}] each edit is audited (booking.update)`);
+  }
+
   const anyDoc = await gql(owner, '{ renderReport(request: { sample: "cbc" }, format: html) { html } invoiceTotals(request: { invoice: { invoiceNo: "T-1", patient: { name: "Kavita Sharma", age: 32, sex: "Female" }, items: ["cbc"] } }) reportTemplates { templates { id } } }');
   ok(anyDoc.data?.renderReport.html.includes("<html") && anyDoc.data.invoiceTotals.total > 0 && anyDoc.data.reportTemplates.templates.length > 20, `[${tag}] renderReport / invoiceTotals / reportTemplates from request data`);
   ok(code(await gql(owner, "{ renderReport(request: { patient: { name: \"X\" } }) { fileName } }")) === "BAD_USER_INPUT", `[${tag}] bad report request → BAD_USER_INPUT`);

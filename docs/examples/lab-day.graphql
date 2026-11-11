@@ -35,6 +35,25 @@ mutation Book($branchId: ID!, $patientId: ID!) {
   }
 }
 
+# Book and bill in one request: the invoice is issued with the payment taken at the counter.
+mutation BookAndBill($branchId: ID!, $patientId: ID!) {
+  createBooking(input: { branchId: $branchId, patientId: $patientId, tests: [{ testCode: "CBC" }], bill: { payments: [{ amountPaise: 39900, mode: upi }] } }) {
+    booking { id bookingNo }
+    invoice { invoiceNo status totalPaise paidPaise }
+  }
+}
+
+# Add a test and remove one without results; samples and the invoice follow.
+mutation EditBooking($id: ID!) {
+  updateBooking(id: $id, input: { addTests: [{ testCode: "TSH" }], removeTestCodes: ["LFT"], collectionType: home }) {
+    booking { tests { testCode } samples { sampleType status } invoice { invoiceNo totalPaise } invoices { invoiceNo status } }
+    issuedInvoices { invoiceNo totalPaise }
+    cancelledInvoices { invoiceNo }
+    creditNotes { noteNo totalPaise }
+    refundablePaise
+  }
+}
+
 mutation Collect($sampleId: ID!) {
   collectSample(id: $sampleId) { status collectedAt }
 }
