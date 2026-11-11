@@ -80,7 +80,7 @@ and runnable examples are in [examples/](examples/).
 | mutation | `amendReport(id: ID!): Report!` | `report:amend` |  |
 | mutation | `cancelBooking(id: ID!): Booking!` | `booking:cancel` |  |
 | mutation | `collectSample(id: ID!, barcode: String): Sample!` | `sample:collect` | Marks the sample collected. barcode: the tube's own label, when it is not the generated one (unique in the organisation). |
-| mutation | `createBooking(input: CreateBookingInput!): CreateBookingResult!` | `booking:create` |  |
+| mutation | `createBooking(input: CreateBookingInput!): CreateBookingResult!` | `booking:create`, `invoice:create`, `invoice:discount`, `payment:create` |  |
 | mutation | `createDoctor(input: DoctorInput!): Doctor!` | `doctor:manage` |  |
 | mutation | `createReport(bookingId: ID!, testCode: String!, testName: String): Report!` | `report:enter` |  |
 | mutation | `receiveSample(id: ID!): Sample!` | `sample:receive` |  |
@@ -89,6 +89,7 @@ and runnable examples are in [examples/](examples/).
 | mutation | `relabelSample(id: ID!, barcode: String!): Sample!` | `sample:collect` | A new barcode for a sample that the lab has not received yet (BARCODE_TAKEN when another sample has it). |
 | mutation | `releaseReport(id: ID!): Report!` | `report:release` |  |
 | mutation | `saveResults(reportId: ID!, results: [ResultInput!]!): Report!` | `report:enter` |  |
+| mutation | `updateBooking(id: ID!, input: UpdateBookingInput!): UpdateBookingResult!` | `booking:update`, `invoice:cancel`, `invoice:create`, `accounts:post` | Edits a booking (booking:update): doctor, collection details, notes, tests. Samples follow the tests. Billing follows too: an unpaid invoice is cancelled and issued again (invoice:cancel when tests are removed, invoice:create), a paid one gets a credit note for removed tests (accounts:post) and an invoice for added ones (invoice:create). One transaction, audited as booking.update. |
 | mutation | `updateDoctor(id: ID!, input: DoctorPatch!): Doctor!` | `doctor:manage` |  |
 | mutation | `updatePatient(id: ID!, input: UpdatePatientInput!): Patient!` | `patient:update` |  |
 | mutation | `verifyReport(id: ID!): Report!` | `report:verify` |  |

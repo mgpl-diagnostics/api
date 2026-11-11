@@ -28,11 +28,31 @@ stateDiagram-v2
   booked --> cancelled: cancelBooking
   sample_collected --> cancelled: cancelBooking
   in_process --> cancelled: cancelBooking
-  note right of cancelled: needs the booking's invoice cancelled first
+  booked --> booked: updateBooking
+  sample_collected --> sample_collected: updateBooking
+  in_process --> in_process: updateBooking
+  note right of cancelled: needs the booking's invoices cancelled first
 ```
 
 `createBooking` accepts `tests: [{ testCode }]`; the name, price (paise) and sample type come from the
 catalog unless given. One sample (with a barcode) is created per distinct sample type.
+
+**Billing at booking.** With `bill: { payments, billDiscountPaise, applyTaxRules }` the same request issues the
+invoice for the booked tests, in one transaction: a bad discount or payment leaves no booking behind. It needs
+`invoice:create` (a discount `invoice:discount`, payments `payment:create`).
+
+**Editing a booking** (`updateBooking`, `booking:update`), while it is booked, sample collected or in process:
+
+| Change | What happens |
+|---|---|
+| Doctor, collection type, time, address, notes | Saved. `null` clears the doctor, time or address. |
+| Add tests | New sample types get a new pending tube. |
+| Remove tests | Only while the test has no results (its empty report is dropped). A tube not collected yet is dropped when no test needs it. The last test can't be removed: cancel the booking. |
+| Tests change on an **unpaid** invoice | The invoice is cancelled and issued again with the booking's tests, keeping line discounts and the bill discount (capped). Needs `invoice:create`, and `invoice:cancel` when tests are removed. |
+| A test is removed from a **paid** (or credited) invoice | A credit note for that line (`accounts:post`); `refundablePaise` says what can be refunded with `refundPayment`. |
+| Tests are added after payment | A new invoice for the added tests (`invoice:create`). `Booking.invoice` stays the first one; `Booking.invoices` lists them all. |
+
+Everything runs in one transaction and is audited as `booking.update` (what changed).
 
 ## Sample
 

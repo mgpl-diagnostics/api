@@ -3,7 +3,7 @@ import type { Booking, BookingStatus, BookingTest, Patient, Report, ResultValue,
 import type { RequestContext as Ctx } from "../graphql/context";
 import { withErrorCodes } from "../graphql/errors";
 import { actorOf, authorize, branchScope, canSee, cap } from "../graphql/guards";
-import type { CreateBookingInput } from "../services/booking.service";
+import type { CreateBookingInput, UpdateBookingInput } from "../services/booking.service";
 import type { DoctorInput, RegisterPatientInput } from "../services/patient.service";
 import { scopedFind } from "../services/util";
 
@@ -60,6 +60,7 @@ export const labController = withErrorCodes({
     samples: (b: Booking, _: unknown, ctx: Ctx) => ctx.services.bookings.samplesOf(b.id),
     reports: (b: Booking, _: unknown, ctx: Ctx) => (canSee(ctx, "report:read", b.branchId) ? ctx.services.reports.ofBooking(b.id) : []),
     invoice: (b: Booking, _: unknown, ctx: Ctx) => (canSee(ctx, "invoice:read", b.branchId) ? ctx.loaders.invoice.load(b.invoiceId) : null),
+    invoices: (b: Booking, _: unknown, ctx: Ctx) => (canSee(ctx, "invoice:read", b.branchId) ? ctx.services.bookings.invoicesOf(b) : []),
   },
   BookingTest: {
     catalog: (t: BookingTest) => getTestByCode(t.testCode) ?? null,
@@ -82,7 +83,25 @@ export const labController = withErrorCodes({
     createDoctor: (_: unknown, { input }: { input: DoctorInput }, ctx: Ctx) => ctx.services.patients.createDoctor(authorize(ctx, "doctor:manage"), input),
     updateDoctor: (_: unknown, a: { id: string; input: Partial<DoctorInput> }, ctx: Ctx) => ctx.services.patients.updateDoctor(authorize(ctx, "doctor:manage"), a.id, a.input),
 
-    createBooking: (_: unknown, { input }: { input: CreateBookingInput }, ctx: Ctx) => ctx.services.bookings.create(authorize(ctx, "booking:create", input.branchId), input),
+    createBooking: (_: unknown, { input }: { input: CreateBookingInput }, ctx: Ctx) => {
+      const actor = authorize(ctx, "booking:create", input.branchId);
+      if (input.bill) {
+        authorize(ctx, "invoice:create", input.branchId);
+        if ((input.bill.billDiscountPaise ?? 0) > 0) authorize(ctx, "invoice:discount", input.branchId);
+        if (input.bill.payments?.length) authorize(ctx, "payment:create", input.branchId);
+      }
+      return ctx.services.bookings.create(actor, input);
+    },
+    updateBooking: async (_: unknown, a: { id: string; input: UpdateBookingInput }, ctx: Ctx) => {
+      const b = await ctx.services.bookings.get(actorOf(ctx), a.id);
+      const actor = authorize(ctx, "booking:update", b.branchId);
+      const impact = await ctx.services.bookings.impact(actor, b, a.input);
+      if (impact.cancels) authorize(ctx, "invoice:cancel", b.branchId);
+      if (impact.cancels || impact.issues) authorize(ctx, "invoice:create", b.branchId);
+      if (impact.credits) authorize(ctx, "accounts:post", b.branchId);
+      const r = await ctx.services.bookings.update(actor, b, a.input);
+      return { booking: r.booking, samples: r.samples, issuedInvoices: r.issued, cancelledInvoices: r.cancelled, creditNotes: r.creditNotes, refundablePaise: r.refundablePaise };
+    },
     cancelBooking: async (_: unknown, a: { id: string }, ctx: Ctx) => {
       const b = await ctx.services.bookings.get(actorOf(ctx), a.id);
       return ctx.services.bookings.cancel(authorize(ctx, "booking:cancel", b.branchId), a.id);

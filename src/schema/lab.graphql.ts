@@ -39,7 +39,10 @@ export const labTypeDefs = /* GraphQL */ `
     sampleCollection: SampleCollection!
     samples: [Sample!]!
     reports: [Report!]!
+    "The booking's current invoice (the first one that is not cancelled)."
     invoice: Invoice
+    "Every invoice issued for the booking, oldest first: its first one, replacements, and invoices for tests added after it was paid."
+    invoices: [Invoice!]!
     notes: String
     createdAt: DateTime!
   }
@@ -71,7 +74,25 @@ export const labTypeDefs = /* GraphQL */ `
     updatedAt: DateTime!
   }
 
-  type CreateBookingResult { booking: Booking!, samples: [Sample!]! }
+  type CreateBookingResult {
+    booking: Booking!
+    samples: [Sample!]!
+    "Issued with the booking when input.bill is given."
+    invoice: Invoice
+  }
+
+  type UpdateBookingResult {
+    booking: Booking!
+    samples: [Sample!]!
+    "Invoices issued by the change: a replacement for an unpaid invoice, or one for tests added after payment."
+    issuedInvoices: [Invoice!]!
+    "Unpaid invoices cancelled by the change (replaced, or no longer needed)."
+    cancelledInvoices: [Invoice!]!
+    "Credit notes for removed tests on invoices that were paid or already credited."
+    creditNotes: [CreditNote!]!
+    "Money paid that can now be refunded (refundPayment on the invoice)."
+    refundablePaise: Int!
+  }
 
   extend type Query {
     patient(id: ID!): Patient
@@ -101,6 +122,30 @@ export const labTypeDefs = /* GraphQL */ `
     collectionType: CollectionType = walk_in
     scheduledAt: DateTime
     notes: String
+    "Bill at once: an invoice for the booked tests, in the same transaction (needs invoice:create; a discount needs invoice:discount, payments payment:create)."
+    bill: BookingBillInput
+  }
+
+  input BookingBillInput {
+    billDiscountPaise: Int = 0
+    "Taken at the counter with the booking."
+    payments: [PaymentInput!]
+    "Fill HSN/SAC, taxability and GST rate from the tax rules."
+    applyTaxRules: Boolean = false
+  }
+
+  """
+  Changes to a booking; fields left out stay as they are. doctorId: null removes the doctor, scheduledAt: null
+  and collectionAddress: null clear them. Tests can be removed only while they have no results.
+  """
+  input UpdateBookingInput {
+    doctorId: ID
+    collectionType: CollectionType
+    scheduledAt: DateTime
+    collectionAddress: AddressInput
+    notes: String
+    addTests: [BookingTestInput!]
+    removeTestCodes: [String!]
   }
 
   "Unit, range and flag are filled from catalog-kit when omitted and the test is in the catalog."
@@ -113,6 +158,13 @@ export const labTypeDefs = /* GraphQL */ `
     updateDoctor(id: ID!, input: DoctorPatch!): Doctor!
 
     createBooking(input: CreateBookingInput!): CreateBookingResult!
+    """
+    Edits a booking (booking:update): doctor, collection details, notes, tests. Samples follow the tests. Billing
+    follows too: an unpaid invoice is cancelled and issued again (invoice:cancel when tests are removed,
+    invoice:create), a paid one gets a credit note for removed tests (accounts:post) and an invoice for added ones
+    (invoice:create). One transaction, audited as booking.update.
+    """
+    updateBooking(id: ID!, input: UpdateBookingInput!): UpdateBookingResult!
     cancelBooking(id: ID!): Booking!
     "Marks the sample collected. barcode: the tube's own label, when it is not the generated one (unique in the organisation)."
     collectSample(id: ID!, barcode: String): Sample!
