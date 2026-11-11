@@ -123,10 +123,88 @@ export function mapParameter(testCode: string, name: string): string {
   return hit ? hit.name : name;
 }
 
-/** The catalog test suggested for a partner test (catalog-kit search, top hit), for staff to confirm. */
-export function suggestTestCode(name: string): string | null {
+/**
+ * The catalog test suggested for a partner test, for staff to confirm. With the booking's test codes, the
+ * best search hit among them ("LIVER FUNCTION TEST" → the booking's LFT); otherwise the top hit.
+ */
+export function suggestTestCode(name: string, bookingCodes?: readonly string[]): string | null {
+  if (bookingCodes?.length) {
+    const hit = catalogSearch(name, { limit: 10 }).find((h) => h.test.code && bookingCodes.includes(h.test.code));
+    if (hit) return hit.test.code!;
+  }
   return catalogSearch(name, { limit: 1 })[0]?.test.code ?? null;
 }
+
+/** A booking that may be the one a partner report belongs to, with why. */
+export interface BookingCandidate {
+  booking: Booking;
+  /** 0 to 100 */
+  score: number;
+  reasons: string[];
+  patientMismatches: string[];
+  /** For each partner test (by index), the booking's test it maps to, if any. */
+  mappings: { testIndex: number; testCode: string | null }[];
+  /** Name, sex and age agree and at least one test maps: safe to suggest first. */
+  strong: boolean;
+}
+
+/** How alike two names are, without titles: 50 same, 35 one contains the other's words, 15 same first name, else 0. */
+export function nameScore(a: string | null | undefined, b: string | null | undefined): number {
+  const x = normName(a), y = normName(b);
+  if (!x || !y) return 0;
+  if (x === y) return 50;
+  const xs = x.split(" "), ys = y.split(" ");
+  const within = (p: string[], q: string[]) => p.length > 1 && p.every((w) => q.includes(w));
+  if (within(xs, ys) || within(ys, xs)) return 35;
+  if (xs[0] === ys[0] && xs[0]!.length > 2) return 15;
+  return 0;
+}
+
+/**
+ * Scores one booking against a partner report: name, sex, age (±1), the partner tests that map to the
+ * booked tests, and how recent the booking is. Pure, so it is tested without a database.
+ */
+export function scoreCandidate(report: ExtractedReport, booking: Booking, patient: Patient, at = new Date()): BookingCandidate {
+  const reasons: string[] = [];
+  let score = 0;
+  const ns = nameScore(report.patient.name, patient.name);
+  score += ns;
+  if (ns === 50) reasons.push("same name");
+  else if (ns === 35) reasons.push("name matches in part");
+  else if (ns === 15) reasons.push("same first name");
+  let agree = ns >= 35;
+  if (report.patient.sex && patient.sex !== "other") {
+    if (report.patient.sex === patient.sex) (score += 10), reasons.push("same sex");
+    else (score -= 30), (agree = false);
+  }
+  const ours = ageYears(patient, at);
+  if (report.patient.ageYears != null && ours != null) {
+    if (Math.abs(report.patient.ageYears - ours) <= 1) (score += 10), reasons.push(`age ${ours}`);
+    else (score -= 20), (agree = false);
+  }
+  const codes = booking.tests.map((t) => t.testCode);
+  const mappings = report.tests.map((t, testIndex) => {
+    const c = suggestTestCode(t.name, codes);
+    return { testIndex, testCode: c && codes.includes(c) ? c : null };
+  });
+  const mapped = [...new Set(mappings.map((m) => m.testCode).filter((c): c is string => !!c))];
+  if (mapped.length) {
+    score += Math.min(30, 15 * mapped.length);
+    reasons.push(`booked ${mapped.join(", ")}`);
+  } else score -= 10;
+  const days = (at.getTime() - new Date(booking.createdAt).getTime()) / 86_400_000;
+  if (days <= 7) (score += 10), reasons.push(days < 1 ? "booked today" : `booked ${Math.round(days)} day${Math.round(days) === 1 ? "" : "s"} ago`);
+  else if (days <= 30) score += 5;
+  if (booking.status === "completed") score -= 15;
+  return {
+    booking, score: Math.max(0, Math.min(100, score)), reasons, mappings,
+    patientMismatches: patientMismatches(report, patient, at),
+    strong: agree && mapped.length > 0,
+  };
+}
+
+/** Bookings an import can be tied to: open ones (not cancelled), newest first. */
+const OPEN = new Set(["booked", "sample_collected", "in_process", "completed"]);
 
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
@@ -240,7 +318,7 @@ export class ImportService {
     const booking = job.bookingId ? await this.repos.bookings.get(job.bookingId) : null;
     const matchWarnings = booking ? await this.bookingWarnings(report, booking) : [];
     const now = new Date();
-    return this.repos.transaction(async (tx) => {
+    const row = await this.repos.transaction(async (tx) => {
       const row = await tx.externalReports.create({
         id: file.id, orgId: actor.orgId, branchId: job.branchId, bookingId: booking?.id ?? null,
         lab: report.source.lab, labName: report.source.labName, processedAt: report.source.processedAt ?? null,
@@ -259,6 +337,50 @@ export class ImportService {
       await tx.audit.log({ orgId: actor.orgId, branchId: job.branchId, userId: actor.userId, action: "external_report.import", entity: "external_report", entityId: row.id, data: { lab: row.lab, tests: report.tests.length } });
       return row;
     });
+    if (booking) return row;
+    // no booking given: tie it to the one booking it clearly belongs to, if there is exactly one
+    const found = await this.autoMatchFor(actor, row);
+    return found ? this.match(actor, row, found, true) : row;
+  }
+
+  /**
+   * Bookings this partner report may belong to, best first: patients found by the printed name (whole,
+   * then each word of 3+ letters), their recent bookings in `scope`, scored by name, sex, age and the
+   * booked tests (scoreCandidate). Candidates with nothing in common are left out.
+   */
+  async candidates(actor: Actor, ext: ExternalReport, scope: "all" | Id[], limit = 5): Promise<BookingCandidate[]> {
+    const report = ext.extracted as unknown as ExtractedReport;
+    const name = normName(report.patient.name);
+    if (!name) return [];
+    const patients = new Map<Id, Patient>();
+    for (const q of [name, ...name.split(" ").filter((w) => w.length >= 3)]) {
+      for (const p of await this.repos.patients.search(actor.orgId, q, 20)) if (p.orgId === actor.orgId) patients.set(p.id, p);
+      if (patients.size >= 40) break;
+    }
+    const since = Date.now() - 90 * 86_400_000;
+    const out: BookingCandidate[] = [];
+    for (const p of patients.values()) {
+      if (!nameScore(report.patient.name, p.name)) continue;
+      const bookings = await this.repos.bookings.find({ orgId: actor.orgId, patientId: p.id } as never, { sort: { field: "createdAt", dir: "desc" }, limit: 5 });
+      for (const b of bookings) {
+        if (!OPEN.has(b.status) || new Date(b.createdAt).getTime() < since) continue;
+        if (scope !== "all" && !scope.includes(b.branchId)) continue;
+        const c = scoreCandidate(report, b, p);
+        if (c.score > 0) out.push(c);
+      }
+    }
+    return out.sort((a, b) => Number(b.strong) - Number(a.strong) || b.score - a.score).slice(0, limit);
+  }
+
+  /**
+   * The one booking an upload clearly belongs to, or null: a strong candidate in the upload's branch with
+   * no other strong candidate within 20 points. Staff still review and apply; matching is reversible.
+   */
+  async autoMatchFor(actor: Actor, ext: ExternalReport): Promise<Booking | null> {
+    const [top, next] = await this.candidates(actor, ext, [ext.branchId], 2);
+    if (!top?.strong) return null;
+    if (next?.strong && next.score > top.score - 20) return null;
+    return top.booking;
   }
 
   private async bookingWarnings(report: ExtractedReport, booking: Booking): Promise<string[]> {
@@ -267,13 +389,13 @@ export class ImportService {
   }
 
   /** Ties an import to a booking (or another booking). Name, sex and age are compared; differences become warnings. */
-  async match(actor: Actor, ext: ExternalReport, booking: Booking): Promise<ExternalReport> {
+  async match(actor: Actor, ext: ExternalReport, booking: Booking, auto = false): Promise<ExternalReport> {
     if (ext.status === "applied") throw new ReportAlreadyAppliedError();
     if (ext.status === "rejected") throw new ConflictError("This partner report was rejected");
     const report = ext.extracted as unknown as ExtractedReport;
     const warnings = [...ext.warnings.filter((w) => !w.startsWith(MATCH_PREFIX)), ...(await this.bookingWarnings(report, booking))];
     const out = await this.repos.externalReports.update(ext.id, { bookingId: booking.id, branchId: booking.branchId, status: "matched", warnings });
-    await this.repos.audit.log({ orgId: actor.orgId, branchId: booking.branchId, userId: actor.userId, action: "external_report.match", entity: "external_report", entityId: ext.id, data: { bookingId: booking.id } });
+    await this.repos.audit.log({ orgId: actor.orgId, branchId: booking.branchId, userId: actor.userId, action: auto ? "external_report.auto_match" : "external_report.match", entity: "external_report", entityId: ext.id, data: { bookingId: booking.id } });
     return out!;
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@mgpl-diagnostics/api",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "MGPL Diagnostics backend: one GraphQL endpoint (GraphQL Yoga on Fastify) over the kits (auth, db, catalog, report, invoice, finance, tally) used as internal libraries, plus a BullMQ worker on Redis.",
   "type": "module",

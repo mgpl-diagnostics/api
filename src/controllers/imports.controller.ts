@@ -104,14 +104,18 @@ export const importsController = withErrorCodes({
     patient: (e: ExternalReport) => extractedOf(e).patient ?? {},
     sampleIds: (e: ExternalReport) => extractedOf(e).sample?.sampleIds ?? [],
     reportedAt: (e: ExternalReport) => extractedOf(e).dates?.reported ?? null,
-    tests: (e: ExternalReport) => {
+    candidates: (e: ExternalReport, a: { first?: number | null }, ctx: Ctx) =>
+      e.status === "applied" || e.status === "rejected" ? [] : ctx.services.imports.candidates(actorOf(ctx), e, branchScope(ctx, "report:import"), Math.min(cap(a.first, 5), 10)),
+    tests: async (e: ExternalReport, _: unknown, ctx: Ctx) => {
       const r = extractedOf(e);
+      const booking = e.bookingId ? await ctx.loaders.booking.load(e.bookingId) : null;
+      const codes = booking?.tests.map((t) => t.testCode);
       return r.tests.map((t, index) => ({
         ...t,
         index,
         accredited: t.accredited === true,
         parameters: t.parameters.map((p) => ({ ...p, flag: flagOut(p.flag) })),
-        suggestedTestCode: suggestTestCode(t.name),
+        suggestedTestCode: suggestTestCode(t.name, codes),
         provenance: labelOf(r, t),
       }));
     },

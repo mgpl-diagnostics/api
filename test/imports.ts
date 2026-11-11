@@ -84,6 +84,19 @@ export async function importSuite(c: ImportCtx) {
   const again = await gql(tech, IMPORT, { pdf: b64(clinova), b: booking.id });
   ok(again.data?.importExternalReport.id === ext?.id, t("the same PDF again → the same import"));
   ok((await gql(tech, "query($b: ID!) { externalReports(bookingId: $b) { nodes { id } pageInfo { hasNextPage } } }", { b: booking.id })).data?.externalReports.nodes.length === 1, t("externalReports(bookingId) lists it once"));
+
+  // ------------------------------------------------------------ no booking given: candidates and auto-match
+  const copyPdf = await PDFDocument.load(clinova);
+  copyPdf.setTitle("copy");
+  const auto = (await gql(tech, IMPORT, { pdf: b64(await copyPdf.save()), br: c.branchA })).data?.importExternalReport;
+  ok(auto?.status === "matched" && auto.booking?.id === booking.id && auto.patientMismatches.length === 0, t("upload with no booking → matched on its own to the one booking it fits"));
+  ok((await c.repos.audit.find({ orgId: c.orgId, action: "external_report.auto_match" } as never)).length === 1, t("…audited as external_report.auto_match"));
+  const cands = (await gql(tech, `query($id: ID!) { externalReport(id: $id) { candidates { booking { id } score strong reasons patientMismatches mappings { testIndex testCode } } tests { index suggestedTestCode } } }`, { id: auto?.id })).data?.externalReport;
+  const top = cands?.candidates[0];
+  ok(top?.booking.id === booking.id && top.strong && top.score >= 70 && top.reasons.includes("same name") && top.mappings.some((m: any) => m.testCode === "LIPR") && top.mappings.some((m: any) => m.testCode === "ESR"), t(`candidates: the booking first, strong, score ${top?.score}, tests mapped to LIPR and ESR`));
+  ok(cands?.tests.every((x: any) => ["LIPR", "ESR"].includes(x.suggestedTestCode)), t("matched → suggested codes come from the booking's tests"));
+  ok((await gql(otherOwner, `query($id: ID!) { externalReport(id: $id) { candidates { score } } }`, { id: auto?.id })).data?.externalReport == null, t("another organisation sees no candidates"));
+  await gql(tech, "mutation($id: ID!) { rejectExternalReport(id: $id, reason: \"Duplicate\") { status } }", { id: auto?.id });
   ok(code(await gql(otherOwner, `query($id: ID!) { externalReport(id: $id) { id } }`, { id: ext?.id })) === "NOT_FOUND", t("another organisation → NOT_FOUND"));
   ok(code(await gql(desk, `query($id: ID!) { externalReport(id: $id) { id } }`, { id: ext?.id })) === "FORBIDDEN", t("externalReport needs report:import"));
 

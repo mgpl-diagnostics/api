@@ -2381,7 +2381,9 @@ flowchart LR
 | Step | Field | Permission | Notes |
 |---|---|---|---|
 | Upload | `importExternalReport(pdfBase64, fileName, bookingId, branchId)` | `report:import` in the branch | `branchId` defaults to the booking's. The same PDF again returns the same import (by SHA-256). A PDF the reader does not support → `UNSUPPORTED_REPORT`, and its file is not kept. |
-| Review | `externalReport(id)`, `externalReports(branchId, bookingId, status, first, after)` | `report:import` | Tests with parameters as printed, `suggestedTestCode` (catalog-kit's top search hit), the provenance line each test will print, signatories and `warnings`. |
+| Review | `externalReport(id)`, `externalReports(branchId, bookingId, status, first, after)` | `report:import` | Tests with parameters as printed, `suggestedTestCode` (once matched, the best catalog hit among the booking's tests; otherwise the top hit), the provenance line each test will print, signatories and `warnings`. |
+| Find the booking | `ExternalReport.candidates(first)` | `report:import` (lists only bookings in those branches) | Patients found by the printed name (whole, then each word), their bookings of the last 90 days that are not cancelled, scored 0 to 100: name (same, in part, first name), sex, age ±1, partner tests that map to booked tests (catalog search among the booking's codes), how recent. `strong` = name, sex and age agree and a test maps. Each candidate carries its `reasons`, `patientMismatches` and per-test `mappings`. |
+| Auto-match | on upload without `bookingId` | — | When exactly one strong candidate in the upload's branch stands out (no other strong one within 20 points), the import is matched to it at once (status `matched`, audited `external_report.auto_match`). Staff still check and apply; matching another booking undoes it. Nothing is applied automatically. |
 | Match | `matchExternalReport(id, bookingId)` | `report:import` (both branches) | Compares the patient: name case-insensitive without titles, sex, age within ±1 year. Each difference is listed in `patientMismatches`. |
 | Apply | `applyExternalReport(id, mappings, confirmPatientMismatch)` | `report:import` + `report:enter` | One mapping per partner test: `{ testIndex, testCode }` (a test in the booking). Parameters map to our catalog names within the chosen test. Values, units, ranges and flags are copied **as printed**. Ranges are never recomputed. With mismatches, `confirmPatientMismatch: true` is required (otherwise `BOOKING_PATIENT_MISMATCH`). Applying twice → `REPORT_ALREADY_APPLIED`. |
 | Reject | `rejectExternalReport(id, reason)` | `report:import` | |
@@ -3096,7 +3098,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/api",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "MGPL Diagnostics backend: one GraphQL endpoint (GraphQL Yoga on Fastify) over the kits (auth, db, catalog, report, invoice, finance, tally) used as internal libraries, plus a BullMQ worker on Redis.",
   "type": "module",
@@ -3906,6 +3908,13 @@ type ExternalReport {
   booking: Booking
   branchId: ID!
   byteLength: Int!
+
+  """
+  Bookings it may belong to, best first, in the branches where you may import. An upload with no
+  bookingId is matched on its own when exactly one strong candidate stands out (status matched,
+  audited as external_report.auto_match); staff still review and apply.
+  """
+  candidates(first: Int = 5): [ExternalReportCandidate!]!
   fileName: String
   id: ID!
   lab: ExternalLab!
@@ -3934,6 +3943,32 @@ type ExternalReport {
 
   """Reader warnings and booking-check differences."""
   warnings: [String!]!
+}
+
+"""
+A booking a partner report may belong to (found by the printed patient name), with why.
+"""
+type ExternalReportCandidate {
+  booking: Booking!
+
+  """For each partner test, the booked test it maps to (null: none)."""
+  mappings: [ExternalTestSuggestion!]!
+
+  """
+  Differences from this booking's patient, as matchExternalReport would record them.
+  """
+  patientMismatches: [String!]!
+  reasons: [String!]!
+
+  """
+  0 to 100: name, sex, age ±1, partner tests that map to the booked tests, how recent.
+  """
+  score: Int!
+
+  """
+  Name, sex and age agree and at least one partner test maps to a booked test.
+  """
+  strong: Boolean!
 }
 
 type ExternalReportConnection {
@@ -4046,7 +4081,7 @@ type ExternalTest {
   signedBy: [String!]!
 
   """
-  Our catalog test suggested for it (top search hit), for staff to confirm.
+  Our catalog test suggested for it, for staff to confirm: once matched, the best hit among the booking's tests; otherwise the top search hit.
   """
   suggestedTestCode: String
 }
@@ -4059,6 +4094,11 @@ input ExternalTestMappingInput {
   testCode: String!
 
   """ExternalTest.index"""
+  testIndex: Int!
+}
+
+type ExternalTestSuggestion {
+  testCode: String
   testIndex: Int!
 }
 
@@ -6930,14 +6970,18 @@ export const importsController = withErrorCodes({
     patient: (e: ExternalReport) => extractedOf(e).patient ?? {},
     sampleIds: (e: ExternalReport) => extractedOf(e).sample?.sampleIds ?? [],
     reportedAt: (e: ExternalReport) => extractedOf(e).dates?.reported ?? null,
-    tests: (e: ExternalReport) => {
+    candidates: (e: ExternalReport, a: { first?: number | null }, ctx: Ctx) =>
+      e.status === "applied" || e.status === "rejected" ? [] : ctx.services.imports.candidates(actorOf(ctx), e, branchScope(ctx, "report:import"), Math.min(cap(a.first, 5), 10)),
+    tests: async (e: ExternalReport, _: unknown, ctx: Ctx) => {
       const r = extractedOf(e);
+      const booking = e.bookingId ? await ctx.loaders.booking.load(e.bookingId) : null;
+      const codes = booking?.tests.map((t) => t.testCode);
       return r.tests.map((t, index) => ({
         ...t,
         index,
         accredited: t.accredited === true,
         parameters: t.parameters.map((p) => ({ ...p, flag: flagOut(p.flag) })),
-        suggestedTestCode: suggestTestCode(t.name),
+        suggestedTestCode: suggestTestCode(t.name, codes),
         provenance: labelOf(r, t),
       }));
     },
@@ -9336,7 +9380,7 @@ export const importsTypeDefs = /* GraphQL */ `
     notes: String
     "Ids of the signatories who signed this test's pages."
     signedBy: [String!]!
-    "Our catalog test suggested for it (top search hit), for staff to confirm."
+    "Our catalog test suggested for it, for staff to confirm: once matched, the best hit among the booking's tests; otherwise the top search hit."
     suggestedTestCode: String
     provenance: ExternalProvenanceLabel!
   }
@@ -9388,7 +9432,29 @@ export const importsTypeDefs = /* GraphQL */ `
     uploadedAt: DateTime!
     appliedAt: DateTime
     rejectReason: String
+    """
+    Bookings it may belong to, best first, in the branches where you may import. An upload with no
+    bookingId is matched on its own when exactly one strong candidate stands out (status matched,
+    audited as external_report.auto_match); staff still review and apply.
+    """
+    candidates(first: Int = 5): [ExternalReportCandidate!]!
   }
+
+  "A booking a partner report may belong to (found by the printed patient name), with why."
+  type ExternalReportCandidate {
+    booking: Booking!
+    "0 to 100: name, sex, age ±1, partner tests that map to the booked tests, how recent."
+    score: Int!
+    "Name, sex and age agree and at least one partner test maps to a booked test."
+    strong: Boolean!
+    reasons: [String!]!
+    "Differences from this booking's patient, as matchExternalReport would record them."
+    patientMismatches: [String!]!
+    "For each partner test, the booked test it maps to (null: none)."
+    mappings: [ExternalTestSuggestion!]!
+  }
+
+  type ExternalTestSuggestion { testIndex: Int!, testCode: String }
 
   type PageInfo { hasNextPage: Boolean!, endCursor: String }
   type ExternalReportConnection { nodes: [ExternalReport!]!, pageInfo: PageInfo! }
@@ -11396,10 +11462,88 @@ export function mapParameter(testCode: string, name: string): string {
   return hit ? hit.name : name;
 }
 
-/** The catalog test suggested for a partner test (catalog-kit search, top hit), for staff to confirm. */
-export function suggestTestCode(name: string): string | null {
+/**
+ * The catalog test suggested for a partner test, for staff to confirm. With the booking's test codes, the
+ * best search hit among them ("LIVER FUNCTION TEST" → the booking's LFT); otherwise the top hit.
+ */
+export function suggestTestCode(name: string, bookingCodes?: readonly string[]): string | null {
+  if (bookingCodes?.length) {
+    const hit = catalogSearch(name, { limit: 10 }).find((h) => h.test.code && bookingCodes.includes(h.test.code));
+    if (hit) return hit.test.code!;
+  }
   return catalogSearch(name, { limit: 1 })[0]?.test.code ?? null;
 }
+
+/** A booking that may be the one a partner report belongs to, with why. */
+export interface BookingCandidate {
+  booking: Booking;
+  /** 0 to 100 */
+  score: number;
+  reasons: string[];
+  patientMismatches: string[];
+  /** For each partner test (by index), the booking's test it maps to, if any. */
+  mappings: { testIndex: number; testCode: string | null }[];
+  /** Name, sex and age agree and at least one test maps: safe to suggest first. */
+  strong: boolean;
+}
+
+/** How alike two names are, without titles: 50 same, 35 one contains the other's words, 15 same first name, else 0. */
+export function nameScore(a: string | null | undefined, b: string | null | undefined): number {
+  const x = normName(a), y = normName(b);
+  if (!x || !y) return 0;
+  if (x === y) return 50;
+  const xs = x.split(" "), ys = y.split(" ");
+  const within = (p: string[], q: string[]) => p.length > 1 && p.every((w) => q.includes(w));
+  if (within(xs, ys) || within(ys, xs)) return 35;
+  if (xs[0] === ys[0] && xs[0]!.length > 2) return 15;
+  return 0;
+}
+
+/**
+ * Scores one booking against a partner report: name, sex, age (±1), the partner tests that map to the
+ * booked tests, and how recent the booking is. Pure, so it is tested without a database.
+ */
+export function scoreCandidate(report: ExtractedReport, booking: Booking, patient: Patient, at = new Date()): BookingCandidate {
+  const reasons: string[] = [];
+  let score = 0;
+  const ns = nameScore(report.patient.name, patient.name);
+  score += ns;
+  if (ns === 50) reasons.push("same name");
+  else if (ns === 35) reasons.push("name matches in part");
+  else if (ns === 15) reasons.push("same first name");
+  let agree = ns >= 35;
+  if (report.patient.sex && patient.sex !== "other") {
+    if (report.patient.sex === patient.sex) (score += 10), reasons.push("same sex");
+    else (score -= 30), (agree = false);
+  }
+  const ours = ageYears(patient, at);
+  if (report.patient.ageYears != null && ours != null) {
+    if (Math.abs(report.patient.ageYears - ours) <= 1) (score += 10), reasons.push(`age ${ours}`);
+    else (score -= 20), (agree = false);
+  }
+  const codes = booking.tests.map((t) => t.testCode);
+  const mappings = report.tests.map((t, testIndex) => {
+    const c = suggestTestCode(t.name, codes);
+    return { testIndex, testCode: c && codes.includes(c) ? c : null };
+  });
+  const mapped = [...new Set(mappings.map((m) => m.testCode).filter((c): c is string => !!c))];
+  if (mapped.length) {
+    score += Math.min(30, 15 * mapped.length);
+    reasons.push(`booked ${mapped.join(", ")}`);
+  } else score -= 10;
+  const days = (at.getTime() - new Date(booking.createdAt).getTime()) / 86_400_000;
+  if (days <= 7) (score += 10), reasons.push(days < 1 ? "booked today" : `booked ${Math.round(days)} day${Math.round(days) === 1 ? "" : "s"} ago`);
+  else if (days <= 30) score += 5;
+  if (booking.status === "completed") score -= 15;
+  return {
+    booking, score: Math.max(0, Math.min(100, score)), reasons, mappings,
+    patientMismatches: patientMismatches(report, patient, at),
+    strong: agree && mapped.length > 0,
+  };
+}
+
+/** Bookings an import can be tied to: open ones (not cancelled), newest first. */
+const OPEN = new Set(["booked", "sample_collected", "in_process", "completed"]);
 
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
@@ -11513,7 +11657,7 @@ export class ImportService {
     const booking = job.bookingId ? await this.repos.bookings.get(job.bookingId) : null;
     const matchWarnings = booking ? await this.bookingWarnings(report, booking) : [];
     const now = new Date();
-    return this.repos.transaction(async (tx) => {
+    const row = await this.repos.transaction(async (tx) => {
       const row = await tx.externalReports.create({
         id: file.id, orgId: actor.orgId, branchId: job.branchId, bookingId: booking?.id ?? null,
         lab: report.source.lab, labName: report.source.labName, processedAt: report.source.processedAt ?? null,
@@ -11532,6 +11676,50 @@ export class ImportService {
       await tx.audit.log({ orgId: actor.orgId, branchId: job.branchId, userId: actor.userId, action: "external_report.import", entity: "external_report", entityId: row.id, data: { lab: row.lab, tests: report.tests.length } });
       return row;
     });
+    if (booking) return row;
+    // no booking given: tie it to the one booking it clearly belongs to, if there is exactly one
+    const found = await this.autoMatchFor(actor, row);
+    return found ? this.match(actor, row, found, true) : row;
+  }
+
+  /**
+   * Bookings this partner report may belong to, best first: patients found by the printed name (whole,
+   * then each word of 3+ letters), their recent bookings in `scope`, scored by name, sex, age and the
+   * booked tests (scoreCandidate). Candidates with nothing in common are left out.
+   */
+  async candidates(actor: Actor, ext: ExternalReport, scope: "all" | Id[], limit = 5): Promise<BookingCandidate[]> {
+    const report = ext.extracted as unknown as ExtractedReport;
+    const name = normName(report.patient.name);
+    if (!name) return [];
+    const patients = new Map<Id, Patient>();
+    for (const q of [name, ...name.split(" ").filter((w) => w.length >= 3)]) {
+      for (const p of await this.repos.patients.search(actor.orgId, q, 20)) if (p.orgId === actor.orgId) patients.set(p.id, p);
+      if (patients.size >= 40) break;
+    }
+    const since = Date.now() - 90 * 86_400_000;
+    const out: BookingCandidate[] = [];
+    for (const p of patients.values()) {
+      if (!nameScore(report.patient.name, p.name)) continue;
+      const bookings = await this.repos.bookings.find({ orgId: actor.orgId, patientId: p.id } as never, { sort: { field: "createdAt", dir: "desc" }, limit: 5 });
+      for (const b of bookings) {
+        if (!OPEN.has(b.status) || new Date(b.createdAt).getTime() < since) continue;
+        if (scope !== "all" && !scope.includes(b.branchId)) continue;
+        const c = scoreCandidate(report, b, p);
+        if (c.score > 0) out.push(c);
+      }
+    }
+    return out.sort((a, b) => Number(b.strong) - Number(a.strong) || b.score - a.score).slice(0, limit);
+  }
+
+  /**
+   * The one booking an upload clearly belongs to, or null: a strong candidate in the upload's branch with
+   * no other strong candidate within 20 points. Staff still review and apply; matching is reversible.
+   */
+  async autoMatchFor(actor: Actor, ext: ExternalReport): Promise<Booking | null> {
+    const [top, next] = await this.candidates(actor, ext, [ext.branchId], 2);
+    if (!top?.strong) return null;
+    if (next?.strong && next.score > top.score - 20) return null;
+    return top.booking;
   }
 
   private async bookingWarnings(report: ExtractedReport, booking: Booking): Promise<string[]> {
@@ -11540,13 +11728,13 @@ export class ImportService {
   }
 
   /** Ties an import to a booking (or another booking). Name, sex and age are compared; differences become warnings. */
-  async match(actor: Actor, ext: ExternalReport, booking: Booking): Promise<ExternalReport> {
+  async match(actor: Actor, ext: ExternalReport, booking: Booking, auto = false): Promise<ExternalReport> {
     if (ext.status === "applied") throw new ReportAlreadyAppliedError();
     if (ext.status === "rejected") throw new ConflictError("This partner report was rejected");
     const report = ext.extracted as unknown as ExtractedReport;
     const warnings = [...ext.warnings.filter((w) => !w.startsWith(MATCH_PREFIX)), ...(await this.bookingWarnings(report, booking))];
     const out = await this.repos.externalReports.update(ext.id, { bookingId: booking.id, branchId: booking.branchId, status: "matched", warnings });
-    await this.repos.audit.log({ orgId: actor.orgId, branchId: booking.branchId, userId: actor.userId, action: "external_report.match", entity: "external_report", entityId: ext.id, data: { bookingId: booking.id } });
+    await this.repos.audit.log({ orgId: actor.orgId, branchId: booking.branchId, userId: actor.userId, action: auto ? "external_report.auto_match" : "external_report.match", entity: "external_report", entityId: ext.id, data: { bookingId: booking.id } });
     return out!;
   }
 
@@ -12733,6 +12921,19 @@ export async function importSuite(c: ImportCtx) {
   const again = await gql(tech, IMPORT, { pdf: b64(clinova), b: booking.id });
   ok(again.data?.importExternalReport.id === ext?.id, t("the same PDF again → the same import"));
   ok((await gql(tech, "query($b: ID!) { externalReports(bookingId: $b) { nodes { id } pageInfo { hasNextPage } } }", { b: booking.id })).data?.externalReports.nodes.length === 1, t("externalReports(bookingId) lists it once"));
+
+  // ------------------------------------------------------------ no booking given: candidates and auto-match
+  const copyPdf = await PDFDocument.load(clinova);
+  copyPdf.setTitle("copy");
+  const auto = (await gql(tech, IMPORT, { pdf: b64(await copyPdf.save()), br: c.branchA })).data?.importExternalReport;
+  ok(auto?.status === "matched" && auto.booking?.id === booking.id && auto.patientMismatches.length === 0, t("upload with no booking → matched on its own to the one booking it fits"));
+  ok((await c.repos.audit.find({ orgId: c.orgId, action: "external_report.auto_match" } as never)).length === 1, t("…audited as external_report.auto_match"));
+  const cands = (await gql(tech, `query($id: ID!) { externalReport(id: $id) { candidates { booking { id } score strong reasons patientMismatches mappings { testIndex testCode } } tests { index suggestedTestCode } } }`, { id: auto?.id })).data?.externalReport;
+  const top = cands?.candidates[0];
+  ok(top?.booking.id === booking.id && top.strong && top.score >= 70 && top.reasons.includes("same name") && top.mappings.some((m: any) => m.testCode === "LIPR") && top.mappings.some((m: any) => m.testCode === "ESR"), t(`candidates: the booking first, strong, score ${top?.score}, tests mapped to LIPR and ESR`));
+  ok(cands?.tests.every((x: any) => ["LIPR", "ESR"].includes(x.suggestedTestCode)), t("matched → suggested codes come from the booking's tests"));
+  ok((await gql(otherOwner, `query($id: ID!) { externalReport(id: $id) { candidates { score } } }`, { id: auto?.id })).data?.externalReport == null, t("another organisation sees no candidates"));
+  await gql(tech, "mutation($id: ID!) { rejectExternalReport(id: $id, reason: \"Duplicate\") { status } }", { id: auto?.id });
   ok(code(await gql(otherOwner, `query($id: ID!) { externalReport(id: $id) { id } }`, { id: ext?.id })) === "NOT_FOUND", t("another organisation → NOT_FOUND"));
   ok(code(await gql(desk, `query($id: ID!) { externalReport(id: $id) { id } }`, { id: ext?.id })) === "FORBIDDEN", t("externalReport needs report:import"));
 
