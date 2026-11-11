@@ -459,6 +459,23 @@ async function fromConfig(url: string) {
   ok((await sessionIp({ TRUST_PROXY: "1" })) === "203.0.113.9", "[config] TRUST_PROXY=1: the IP the load balancer saw, never the spoofed left entry");
   ok((await sessionIp({})) === "127.0.0.1", "[config] no TRUST_PROXY: X-Forwarded-For is ignored");
 
+  // request ids: a UUIDv7 per request (never Fastify's "req-1" counter); X-Request-ID kept only from a trusted proxy
+  {
+    const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const ids = async (env: Record<string, string>) => {
+      const c = await createContainer({ config: loadConfig({ NODE_ENV: "test", DB_BACKEND: "pg", DATABASE_URL: url, ...env }) });
+      const s = await buildServer(c);
+      const q = async (headers: Record<string, string> = {}) =>
+        String((await s.inject({ method: "POST", url: "/graphql", headers: { "content-type": "application/json", ...headers }, payload: JSON.stringify({ query: "{ health { ok } }" }) })).headers["x-request-id"]);
+      const out = { a: await q(), b: await q(), sent: await q({ "x-request-id": "0123456789abcdef0123456789abcdef" }), bad: await q({ "x-request-id": "evil\tid" }), health: String((await s.inject({ url: "/health?live=1" })).headers["x-request-id"]) };
+      await s.close();
+      return out;
+    };
+    const direct = await ids({}), proxied = await ids({ TRUST_PROXY: "1" });
+    ok(UUID7.test(direct.a) && UUID7.test(direct.b) && direct.a !== direct.b && UUID7.test(direct.health), "[config] x-request-id: a new UUIDv7 per request, on GraphQL and /health");
+    ok(UUID7.test(direct.sent) && proxied.sent === "0123456789abcdef0123456789abcdef" && UUID7.test(proxied.bad), "[config] x-request-id: the incoming one is kept only through TRUST_PROXY, and only when well-formed");
+  }
+
   // TLS fingerprint: read from TLS_FINGERPRINT_HEADER only through trusted proxies, stored hashed, a change audited
   const JA4 = "t13d1516h2_8daaf6152771_e5627efa2ab1", JA4b = "t13d1517h2_8daaf6152771_b1ff8ab2d16f";
   {
