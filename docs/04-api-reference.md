@@ -210,6 +210,15 @@ and runnable examples are in [examples/](examples/).
 | mutation | `nameExternalSignature(input: ExternalSignatoryInput!): ExternalSignatory!` | `signatory:manage` | Names a partner signature; the organisation's unapplied imports that carry it are read again. |
 | mutation | `rejectExternalReport(id: ID!, reason: String!): ExternalReport!` | `report:import` |  |
 
+## patientLinks
+
+| Kind | Operation | Permission | Notes |
+|---|---|---|---|
+| query | `patientDocument(token: String!, kind: PatientDocumentKind!, invoiceId: ID): Document` | public | Public (no sign-in): a PDF from a patient link: one of its bills (invoiceId) or its released reports. Null when the link does not open. |
+| query | `patientLink(bookingId: ID!): PatientLinkInfo!` | `booking:read`, `report:read` | The booking's patient link (made on first use). Needs booking:read and report:read on the booking's branch. |
+| query | `patientPage(token: String!): PatientPage` | public | Public (no sign-in): the page behind a patient link, or null. |
+| mutation | `revokePatientLinks(bookingId: ID!): Int!` | `booking:update` | Stops every link of the booking (printed QRs stop opening); the next print makes a new one. Returns how many were stopped. Needs booking:update. |
+
 ## system
 
 | Kind | Operation | Permission | Notes |

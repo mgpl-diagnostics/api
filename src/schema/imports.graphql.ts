@@ -59,7 +59,7 @@ export const importsTypeDefs = /* GraphQL */ `
     notes: String
     "Ids of the signatories who signed this test's pages."
     signedBy: [String!]!
-    "Our catalog test suggested for it (top search hit), for staff to confirm."
+    "Our catalog test suggested for it, for staff to confirm: once matched, the best hit among the booking's tests; otherwise the top search hit."
     suggestedTestCode: String
     provenance: ExternalProvenanceLabel!
   }
@@ -111,7 +111,29 @@ export const importsTypeDefs = /* GraphQL */ `
     uploadedAt: DateTime!
     appliedAt: DateTime
     rejectReason: String
+    """
+    Bookings it may belong to, best first, in the branches where you may import. An upload with no
+    bookingId is matched on its own when exactly one strong candidate stands out (status matched,
+    audited as external_report.auto_match); staff still review and apply.
+    """
+    candidates(first: Int = 5): [ExternalReportCandidate!]!
   }
+
+  "A booking a partner report may belong to (found by the printed patient name), with why."
+  type ExternalReportCandidate {
+    booking: Booking!
+    "0 to 100: name, sex, age ±1, partner tests that map to the booked tests, how recent."
+    score: Int!
+    "Name, sex and age agree and at least one partner test maps to a booked test."
+    strong: Boolean!
+    reasons: [String!]!
+    "Differences from this booking's patient, as matchExternalReport would record them."
+    patientMismatches: [String!]!
+    "For each partner test, the booked test it maps to (null: none)."
+    mappings: [ExternalTestSuggestion!]!
+  }
+
+  type ExternalTestSuggestion { testIndex: Int!, testCode: String }
 
   type PageInfo { hasNextPage: Boolean!, endCursor: String }
   type ExternalReportConnection { nodes: [ExternalReport!]!, pageInfo: PageInfo! }

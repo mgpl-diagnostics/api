@@ -48,7 +48,7 @@ async function suite(db: Db, tag: string) {
   const repos: Repositories = { ...db.repos, patients: { ...db.repos.patients, getMany: (ids) => { patientBatches++; return db.repos.patients.getMany(ids); } } };
   const mails: { to: string; link: string }[] = [];
   const mailer: Mailer = { passwordReset: async (to, link) => void mails.push({ to: to.email, link }) };
-  const config = { ...loadConfig({ NODE_ENV: "test", MGPL_SAMPLES: "1", INTROSPECTION: "0", DATABASE_URL: "unused" }) };
+  const config = { ...loadConfig({ NODE_ENV: "test", MGPL_SAMPLES: "1", INTROSPECTION: "0", DATABASE_URL: "unused", PATIENT_LINK_SECRET: "test-patient-link-secret-0123456789abcdef", PATIENT_LINK_BASE_URL: "https://lab.example.in/r", PATIENT_LINK_PER_IP: "40" }) };
   const container = await createContainer({ config, db: { ...db, repos }, mailer });
   const app = await buildServer(container);
 
@@ -148,6 +148,40 @@ async function suite(db: Db, tag: string) {
   ok(tb.data?.trialBalance.differencePaise === 0 && tb.data.trialBalance.totalDebitPaise > 0 && tb.data.outstandingReceivables.totalDuePaise === 0, `[${tag}] trial balance balances (ledger-kit); nothing outstanding`);
   const invDoc = await gql(owner, "query($id: ID!) { invoiceDocument(invoiceId: $id) { base64 fileName } h: invoiceDocument(invoiceId: $id, format: html) { html } }", { id: invoiceId });
   ok(Buffer.from(invDoc.data?.invoiceDocument.base64 ?? "", "base64").subarray(0, 5).toString() === "%PDF-" && invDoc.data.h.html.includes(inv.data.issueInvoice.invoiceNo), `[${tag}] invoiceDocument: invoice-kit PDF + HTML of the stored invoice (totals match)`);
+  // ---------------------------------------------------------------- patient links (the QR on reports and bills)
+  {
+    const b = booking.booking.id;
+    const L = "query($b: ID!) { patientLink(bookingId: $b) { url expiresAt } }";
+    const link = (await gql(owner, L, { b })).data?.patientLink;
+    const token = String(link?.url ?? "").replace("https://lab.example.in/r/", "");
+    ok(/^[A-Za-z0-9_-]{43}$/.test(token) && new Date(link.expiresAt).getTime() > Date.now() + 170 * 86_400_000, `[${tag}] patientLink: an https URL under PATIENT_LINK_BASE_URL with a 43-character token, 180 days`);
+    ok((await gql(owner, L, { b })).data?.patientLink.url === link.url, `[${tag}] …the same link again (printing twice prints the same QR)`);
+    const rows = await db.rawRepos.patientLinks.find({ bookingId: b } as never);
+    ok(rows.length === 1 && rows[0]!.tokenHash !== token && !JSON.stringify(rows).includes(token), `[${tag}] …stored as a hash and a nonce, never the token`);
+    ok(code(await gql(otherOwner, L, { b })) === "NOT_FOUND" && code(await gql(null, L, { b })) === "UNAUTHENTICATED", `[${tag}] patientLink: another organisation → NOT_FOUND, no sign-in → UNAUTHENTICATED`);
+    const P = "query($t: String!) { patientPage(token: $t) { labName patientName bookingNo branch { name } invoices { id invoiceNo totalPaise duePaise status } reports { id testName } pending expiresAt } }";
+    const page = (await gql(null, P, { t: token })).data?.patientPage;
+    ok(page?.patientName === "Asha P." && page.labName === "API Lab" && page.branch.name === "Branch A" && page.reports.length === 1 && page.pending.length === 0, `[${tag}] patientPage without sign-in: shortened name, lab, branch, the released report`);
+    ok(page?.invoices.length === 1 && page.invoices[0].invoiceNo === inv.data.issueInvoice.invoiceNo && page.invoices[0].duePaise === 0, `[${tag}] …and the bill, paid`);
+    const bad = await gql(null, "query($a: String!, $b: String!, $c: String!) { a: patientPage(token: $a) { bookingNo } b: patientPage(token: $b) { bookingNo } c: patientPage(token: $c) { bookingNo } }", { a: "x".repeat(43), b: token.slice(0, 42), c: `${token}a` });
+    ok(bad.data && bad.data.a === null && bad.data.b === null && bad.data.c === null && !bad.errors, `[${tag}] unknown, short and long tokens → null (all look the same)`);
+    const D = "query($t: String!, $k: PatientDocumentKind!, $i: ID) { patientDocument(token: $t, kind: $k, invoiceId: $i) { mimeType base64 } }";
+    const rep = (await gql(null, D, { t: token, k: "reports" })).data?.patientDocument;
+    const bill = (await gql(null, D, { t: token, k: "invoice", i: invoiceId })).data?.patientDocument;
+    ok(Buffer.from(rep?.base64 ?? "", "base64").subarray(0, 5).toString() === "%PDF-" && Buffer.from(bill?.base64 ?? "", "base64").subarray(0, 5).toString() === "%PDF-", `[${tag}] patientDocument: the released reports and the bill as PDFs`);
+    ok(code(await gql(null, D, { t: token, k: "invoice", i: page.reports[0].id })) === "NOT_FOUND", `[${tag}] …a bill of another booking (or any other id) → NOT_FOUND`);
+    const views = (await db.rawRepos.patientLinks.find({ bookingId: b } as never))[0]!;
+    ok(views.viewCount === 1 && !!views.lastViewedAt, `[${tag}] the page counts its views`);
+    ok(code(await gql(desk, "mutation($b: ID!) { revokePatientLinks(bookingId: $b) }", { b })) === undefined, `[${tag}] revokePatientLinks with booking:update (front desk)`);
+    ok((await gql(null, P, { t: token })).data?.patientPage === null, `[${tag}] …the revoked link no longer opens`);
+    const next = (await gql(owner, L, { b })).data?.patientLink.url;
+    ok(!!next && next !== link.url && (await gql(null, P, { t: next.split("/").pop() })).data?.patientPage?.bookingNo === page.bookingNo, `[${tag}] …the next print makes a new link that opens`);
+    const audit = await db.rawRepos.audit.find({ action: "patient_link.revoke" } as never);
+    ok(audit.length >= 1, `[${tag}] the revoke is audited`);
+    let limited: string | undefined;
+    for (let i = 0; i < 40 && !limited; i++) limited = code(await gql(null, P, { t: "y".repeat(43) }));
+    ok(limited === "RATE_LIMITED", `[${tag}] patient pages are rate-limited per IP → RATE_LIMITED`);
+  }
   // ---------------------------------------------------------------- tube labels, calculated values, methods, refunds on paper
   {
     const lft = (await gql(owner, "mutation($i: CreateBookingInput!) { createBooking(input: $i) { booking { id } samples { id barcode } } }", { i: { branchId: a.branch.id, patientId, tests: [{ testCode: "LIFT" }] } })).data?.createBooking;

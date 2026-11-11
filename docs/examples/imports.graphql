@@ -12,6 +12,17 @@ mutation ImportPartnerReport($pdf: String!, $bookingId: ID) {
   }
 }
 
+query PartnerReportBookings($id: ID!) {
+  externalReport(id: $id) {
+    id status booking { id bookingNo }
+    candidates(first: 5) {
+      booking { id bookingNo patient { name uhid } }
+      score strong reasons patientMismatches
+      mappings { testIndex testCode }
+    }
+  }
+}
+
 mutation ApplyPartnerReport($id: ID!) {
   applyExternalReport(id: $id, mappings: [{ testIndex: 0, testCode: "LIPR" }], confirmPatientMismatch: false) {
     id testCode status

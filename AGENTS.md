@@ -67,7 +67,10 @@ Dockerfile, docker-compose.yml, deploy/   image; PostgreSQL ← PgBouncer ← N 
     accredited, never a logo; a partner signature only with results from its own PDF (looked up by that
     PDF's sha256), never as ours; Reported by = medical signatories; imports never verify or release.
     PDFs, extracted JSON and signature PNGs are patient data: never logged, never in jobs, fixtures or repos.
-16. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
+16. **Patient links** (docs/21-patient-links.md): the token is the only key and is never stored, logged or put in a job
+    (db-kit keeps its SHA-256 and the nonce). `patientPage` / `patientDocument` are public: rate-limited per IP, null for
+    any token that does not open, one booking only, released reports and issued bills only.
+17. Never commit patient data, signatures, secrets or `.env` files. Test fixtures use fictional names.
 
 ## Commands
 

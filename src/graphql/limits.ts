@@ -28,7 +28,7 @@ export function depthLimit(max: number) {
 }
 
 /** Root fields that render a PDF / HTML document or build a CSV: CPU-heavy, so few per operation. */
-const DOCUMENT_FIELD = /^(bookingReportDocument|invoiceDocument|renderReport|renderInvoice|letterhead|export[A-Z]\w*|importExternalReport)$/;
+const DOCUMENT_FIELD = /^(bookingReportDocument|invoiceDocument|renderReport|renderInvoice|letterhead|patientDocument|export[A-Z]\w*|importExternalReport)$/;
 
 /**
  * Rejects operations that select more than `maxFields` fields in all (fragments counted where they are

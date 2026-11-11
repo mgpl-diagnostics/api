@@ -738,6 +738,13 @@ type ExternalReport {
   booking: Booking
   branchId: ID!
   byteLength: Int!
+
+  """
+  Bookings it may belong to, best first, in the branches where you may import. An upload with no
+  bookingId is matched on its own when exactly one strong candidate stands out (status matched,
+  audited as external_report.auto_match); staff still review and apply.
+  """
+  candidates(first: Int = 5): [ExternalReportCandidate!]!
   fileName: String
   id: ID!
   lab: ExternalLab!
@@ -766,6 +773,32 @@ type ExternalReport {
 
   """Reader warnings and booking-check differences."""
   warnings: [String!]!
+}
+
+"""
+A booking a partner report may belong to (found by the printed patient name), with why.
+"""
+type ExternalReportCandidate {
+  booking: Booking!
+
+  """For each partner test, the booked test it maps to (null: none)."""
+  mappings: [ExternalTestSuggestion!]!
+
+  """
+  Differences from this booking's patient, as matchExternalReport would record them.
+  """
+  patientMismatches: [String!]!
+  reasons: [String!]!
+
+  """
+  0 to 100: name, sex, age ±1, partner tests that map to the booked tests, how recent.
+  """
+  score: Int!
+
+  """
+  Name, sex and age agree and at least one partner test maps to a booked test.
+  """
+  strong: Boolean!
 }
 
 type ExternalReportConnection {
@@ -878,7 +911,7 @@ type ExternalTest {
   signedBy: [String!]!
 
   """
-  Our catalog test suggested for it (top search hit), for staff to confirm.
+  Our catalog test suggested for it, for staff to confirm: once matched, the best hit among the booking's tests; otherwise the top search hit.
   """
   suggestedTestCode: String
 }
@@ -891,6 +924,11 @@ input ExternalTestMappingInput {
   testCode: String!
 
   """ExternalTest.index"""
+  testIndex: Int!
+}
+
+type ExternalTestSuggestion {
+  testCode: String
   testIndex: Int!
 }
 
@@ -1316,6 +1354,11 @@ type Mutation {
   """
   requestPasswordReset(email: String!, orgCode: String): Boolean!
   resetPassword(newPassword: String!, token: String!): Boolean!
+
+  """
+  Stops every link of the booking (printed QRs stop opening); the next print makes a new one. Returns how many were stopped. Needs booking:update.
+  """
+  revokePatientLinks(bookingId: ID!): Int!
   revokeSession(id: ID!): Boolean!
   saveResults(reportId: ID!, results: [ResultInput!]!): Report!
 
@@ -1545,6 +1588,60 @@ type Patient {
   uhid: String!
 }
 
+enum PatientDocumentKind {
+  invoice
+  reports
+}
+
+"""A booking's patient link, for staff to send or show."""
+type PatientLinkInfo {
+  expiresAt: DateTime!
+  url: String!
+}
+
+"""
+What a patient sees from their link: one booking, nothing else. The name is shortened ("Ravi K. S.").
+"""
+type PatientPage {
+  bookedAt: DateTime!
+  bookingNo: String!
+  branch: PatientPageBranch!
+  expiresAt: DateTime!
+
+  """Issued bills of the booking (drafts and cancelled bills are left out)."""
+  invoices: [PatientPageInvoice!]!
+  labName: String!
+  patientName: String!
+
+  """Tests still in the lab, by name."""
+  pending: [String!]!
+
+  """Released reports (verified ones are not given out yet)."""
+  reports: [PatientPageReport!]!
+}
+
+type PatientPageBranch {
+  address: String
+  name: String!
+  phone: String
+}
+
+type PatientPageInvoice {
+  duePaise: Int!
+  id: ID!
+  invoiceNo: String!
+  issuedAt: DateTime!
+  paidPaise: Int!
+  status: String!
+  totalPaise: Int!
+}
+
+type PatientPageReport {
+  id: ID!
+  releasedAt: DateTime
+  testName: String!
+}
+
 input PaySettlementInput {
   date: DateTime
   mode: PaymentMode!
@@ -1716,6 +1813,19 @@ type Query {
   partner(id: ID!): Partner
   partners(branchId: ID): [Partner!]!
   patient(id: ID!): Patient
+
+  """
+  Public (no sign-in): a PDF from a patient link: one of its bills (invoiceId) or its released reports. Null when the link does not open.
+  """
+  patientDocument(invoiceId: ID, kind: PatientDocumentKind!, token: String!): Document
+
+  """
+  The booking's patient link (made on first use). Needs booking:read and report:read on the booking's branch.
+  """
+  patientLink(bookingId: ID!): PatientLinkInfo!
+
+  """Public (no sign-in): the page behind a patient link, or null."""
+  patientPage(token: String!): PatientPage
 
   """Name, phone or UHID."""
   patients(limit: Int = 20, search: String!): [Patient!]!

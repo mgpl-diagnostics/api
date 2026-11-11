@@ -1,4 +1,4 @@
-import type { Auth } from "@mgpl-diagnostics/auth-kit";
+import type { Auth, RateLimiter } from "@mgpl-diagnostics/auth-kit";
 import type { Repositories } from "@mgpl-diagnostics/db-kit";
 import type { LabProfile } from "@mgpl-diagnostics/report-kit";
 import { AuthService, type Mailer } from "./auth.service";
@@ -14,6 +14,7 @@ import { ImportService, type ImportLimits } from "./import.service";
 import { JobService } from "./job.service";
 import type { JobQueue } from "../jobs/types";
 import { OrganizationService } from "./organization.service";
+import { PatientLinkService, type PatientLinkConfig } from "./patient-link.service";
 import { PatientService } from "./patient.service";
 import { PeriodService } from "./period.service";
 import { ReceivablesService } from "./receivables.service";
@@ -33,6 +34,10 @@ export interface ServiceDeps {
   jobs: () => JobQueue;
   /** Partner-lab PDF limits (IMPORT_* variables). */
   imports: ImportLimits;
+  /** Patient links (PATIENT_LINK_*); off when omitted. */
+  patientLinks?: PatientLinkConfig;
+  /** Limits patient page calls per IP (Redis when REDIS_URL is set, so every replica shares it). */
+  patientLinkLimiter?: RateLimiter;
   /** Update notices (UPDATE_* settings); off when omitted. */
   updates?: Config["updates"];
   /** The HTTP client for the release feed (tests). */
@@ -46,6 +51,7 @@ const NO_UPDATES: Config["updates"] = {
 
 /** Every service, one instance each. Services know nothing about GraphQL; controllers call them. */
 export function createServices(d: ServiceDeps) {
+  const patientLinks = new PatientLinkService(d.repos, d.patientLinks ?? { secret: null, baseUrl: null, ttlDays: 180 }, d.patientLinkLimiter ?? null);
   return {
     auth: new AuthService(d.repos, d.auth, { mailer: d.mailer, resetUrl: d.resetUrl, jobs: d.jobs }),
     organization: new OrganizationService(d.repos),
@@ -61,7 +67,8 @@ export function createServices(d: ServiceDeps) {
     cashBank: new CashBankService(d.repos),
     periods: new PeriodService(d.repos),
     exports: new ExportService(d.repos),
-    documents: new DocumentService(d.repos, { lab: d.lab, samples: d.samples }),
+    documents: new DocumentService(d.repos, { lab: d.lab, samples: d.samples, links: patientLinks }),
+    patientLinks,
     jobs: new JobService(d.repos, d.jobs),
     imports: new ImportService(d.repos, d.jobs, d.imports),
     system: new SystemService(d.updates ?? NO_UPDATES, d.fetch),
