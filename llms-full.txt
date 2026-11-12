@@ -749,9 +749,9 @@ and runnable examples are in [examples/](examples/).
 | query | `catalogDepartments: [String!]!` | public |  |
 | query | `catalogSampleTypes: [String!]!` | public |  |
 | query | `catalogSearch(query: String!, limit: Int, department: String, sampleType: String, fuzzy: Boolean): [CatalogHit!]!` | public | Typo-tolerant search with lab shorthand (cbc, lft, vit d…). |
-| query | `catalogTest(id: Int, code: String): CatalogTest` | public |  |
+| query | `catalogTest(id: ID, code: String): CatalogTest` | public | By MGPL id (MGPLT0001), old numeric id (10409) or code (CBC). |
 | query | `catalogTests(department: String, sampleType: String, limit: Int, offset: Int): [CatalogTest!]!` | public |  |
-| query | `priceQuote(tests: [String!]!): PriceQuote!` | public | Total MRP for test codes (or numeric ids as strings). |
+| query | `priceQuote(tests: [String!]!): PriceQuote!` | public | Total MRP for test codes, MGPL ids, or old numeric ids as strings. |
 
 ## lab
 
@@ -1585,6 +1585,8 @@ variables already set in the real environment win over the file.
 | `MAIL_WEBHOOK_URL` | empty | Email relay for reset links when `SMTP_URL` is not set: POST `{ to, subject, text }` |
 | `MGPL_SIGNATURE_HEADER_FILE` | — | PNG for the header variant (outside the repo) |
 | `MGPL_SIGNATURE_NONHEADER_FILE` | — | PNG for the non-header variant |
+| `MGPL_UPI_ID` | — | The lab's UPI id (`name@bank`): bills with an amount due print a UPI pay QR with the amount filled in. A malformed id stops the server at start |
+| `MGPL_UPI_NAME` | the lab's name | Payee name the UPI app shows (the bank account's name) |
 | `MGPL_SIGNATURE_FILE` | — | One file for both |
 | `SHUTDOWN_DRAIN_MS` | `5000` in production, `0` otherwise | On SIGTERM, `GET /health` answers 503 this long while requests are still served ([17-scaling.md](17-scaling.md#graceful-shutdown)) |
 | `SHUTDOWN_TIMEOUT_MS` | `30000` | Exit anyway this long after the signal (API and worker) |
@@ -1696,6 +1698,14 @@ A branch without a state code fails billing with `BAD_USER_INPUT`. The seed scri
 
 Patients' names, phones, addresses and results are health data. Do not log request bodies, do not copy
 production data into tests (fixtures use fictional names), and keep backups encrypted.
+
+## Catalog ids (catalog-kit 2, api 0.1.6)
+
+`CatalogTest.id` is the MGPL id, a string that never changes or is reused: `MGPLT0001` for a test, `MGPLP0001`
+for a profile, `MGPLK0001` for a package. `kind` says which, and `legacyId` keeps the lab software's old numeric
+id (the `Int` id before 0.1.6). `catalogTest(id:)` takes either form, and `priceQuote` takes codes, MGPL ids or
+old ids. `isProfile` is true only for profiles now (before, any test with more than one parameter), and `isPackage`
+marks health packages. Bookings, reports and bills store test **codes**, so no stored data changes.
 
 
 ---
@@ -3099,7 +3109,7 @@ flowchart TD
     },
     {
       "name": "catalog-kit",
-      "ref": "v1.2.0"
+      "ref": "v2.2.0"
     },
     {
       "name": "report-reader",
@@ -3123,7 +3133,7 @@ flowchart TD
     },
     {
       "name": "client",
-      "ref": "v1.12.0"
+      "ref": "v2.0.0"
     },
     {
       "name": "invoice-kit",
@@ -3187,7 +3197,7 @@ Key facts for agents:
 ```json
 {
   "name": "@mgpl-diagnostics/api",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "MGPL Diagnostics backend: one GraphQL endpoint (GraphQL Yoga on Fastify) over the kits (auth, db, catalog, report, invoice, finance, tally) used as internal libraries, plus a BullMQ worker on Redis.",
   "type": "module",
@@ -3213,7 +3223,7 @@ Key facts for agents:
   "dependencies": {
     "@graphql-tools/schema": "^11.0.8",
     "@mgpl-diagnostics/auth-kit": "^1.5.0",
-    "@mgpl-diagnostics/catalog-kit": "^1.2.0",
+    "@mgpl-diagnostics/catalog-kit": "^2.2.0",
     "@mgpl-diagnostics/db-kit": "^2.2.0",
     "@mgpl-diagnostics/finance-kit": "^1.0.1",
     "@mgpl-diagnostics/invoice-kit": "^2.2.0",
@@ -3235,7 +3245,7 @@ Key facts for agents:
     "sequelize": "^6.37.8"
   },
   "devDependencies": {
-    "@mgpl-diagnostics/client": "^1.12.0",
+    "@mgpl-diagnostics/client": "^2.0.0",
     "@types/node": "^22.20.5",
     "embedded-postgres": "^18.4.0-beta.17",
     "ioredis-mock": "^8.13.1",
@@ -3571,6 +3581,13 @@ type CatalogInterval {
   low: String
 }
 
+"""What a catalog entry is. Ids are numbered per kind."""
+enum CatalogKind {
+  package
+  profile
+  test
+}
+
 type CatalogParameter {
   calculated: Boolean!
   female: CatalogInterval
@@ -3597,8 +3614,21 @@ type CatalogParameter {
 type CatalogTest {
   code: String
   department: String!
-  id: Int!
+
+  """
+  MGPL id: MGPLT0001 (test), MGPLP0001 (profile), MGPLK0001 (package). Never changes or is reused.
+  """
+  id: ID!
+  isPackage: Boolean!
+
+  """A profile or a package (several tests sold together)."""
   isProfile: Boolean!
+  kind: CatalogKind!
+
+  """
+  The lab software's old numeric id (the id before catalog-kit 2); null for entries added since.
+  """
+  legacyId: Int
 
   """MRP in rupees."""
   mrp: Int
@@ -5010,7 +5040,9 @@ type Query {
 
   """Typo-tolerant search with lab shorthand (cbc, lft, vit d…)."""
   catalogSearch(department: String, fuzzy: Boolean = true, limit: Int = 20, query: String!, sampleType: String): [CatalogHit!]!
-  catalogTest(code: String, id: Int): CatalogTest
+
+  """By MGPL id (MGPLT0001), old numeric id (10409) or code (CBC)."""
+  catalogTest(code: String, id: ID): CatalogTest
   catalogTests(department: String, limit: Int = 50, offset: Int = 0, sampleType: String): [CatalogTest!]!
   creditNote(id: ID!): CreditNote
   creditNotes(customerId: ID, invoiceId: ID, limit: Int = 50, offset: Int = 0): [CreditNote!]!
@@ -5097,7 +5129,7 @@ type Query {
   """
   priceList: [PriceListEntry!]!
 
-  """Total MRP for test codes (or numeric ids as strings)."""
+  """Total MRP for test codes, MGPL ids, or old numeric ids as strings."""
   priceQuote(tests: [String!]!): PriceQuote!
   profitAndLoss(branchId: ID, from: DateTime!, to: DateTime!): ProfitAndLoss!
   receivablesSummary(asOf: DateTime!): ReceivablesSummary!
@@ -6758,7 +6790,7 @@ export const catalogController = withErrorCodes({
   Query: {
     catalogSearch: (_: unknown, a: { query: string; limit?: number; department?: string | null; sampleType?: string | null; fuzzy?: boolean | null }, ctx: Ctx) =>
       ctx.services.catalog.search(a.query, { limit: cap(a.limit, 20), department: a.department, sampleType: a.sampleType, fuzzy: a.fuzzy }),
-    catalogTest: (_: unknown, a: { id?: number | null; code?: string | null }, ctx: Ctx) => ctx.services.catalog.test(a),
+    catalogTest: (_: unknown, a: { id?: string | null; code?: string | null }, ctx: Ctx) => ctx.services.catalog.test(a),
     catalogTests: (_: unknown, a: { department?: string | null; sampleType?: string | null; limit?: number; offset?: number }, ctx: Ctx) =>
       ctx.services.catalog.tests({ department: a.department, sampleType: a.sampleType, limit: cap(a.limit, 50), offset: a.offset ?? 0 }),
     catalogDepartments: (_: unknown, __: unknown, ctx: Ctx) => ctx.services.catalog.departments(),
@@ -6771,6 +6803,7 @@ export const catalogController = withErrorCodes({
   CatalogTest: {
     pricePaise: (t: LabTest) => (t.mrp == null ? null : t.mrp * 100),
     isProfile: (t: LabTest, _: unknown, ctx: Ctx) => ctx.services.catalog.isProfile(t),
+    isPackage: (t: LabTest, _: unknown, ctx: Ctx) => ctx.services.catalog.isPackage(t),
   },
   CatalogParameter: {
     male: (p: Parameter) => (p.male ? { low: bound(p.male.low), high: bound(p.male.high) } : null),
@@ -9094,8 +9127,15 @@ export const catalogTypeDefs = /* GraphQL */ `
     narrative: Boolean!
   }
 
+  "What a catalog entry is. Ids are numbered per kind."
+  enum CatalogKind { test profile package }
+
   type CatalogTest {
-    id: Int!
+    "MGPL id: MGPLT0001 (test), MGPLP0001 (profile), MGPLK0001 (package). Never changes or is reused."
+    id: ID!
+    kind: CatalogKind!
+    "The lab software's old numeric id (the id before catalog-kit 2); null for entries added since."
+    legacyId: Int
     name: String!
     code: String
     shortCode: String
@@ -9106,7 +9146,9 @@ export const catalogTypeDefs = /* GraphQL */ `
     mrp: Int
     "MRP in paise (what bookings and invoices use)."
     pricePaise: Int
+    "A profile or a package (several tests sold together)."
     isProfile: Boolean!
+    isPackage: Boolean!
     parameterCount: Int!
     parameters: [CatalogParameter!]!
   }
@@ -9117,11 +9159,12 @@ export const catalogTypeDefs = /* GraphQL */ `
   extend type Query {
     "Typo-tolerant search with lab shorthand (cbc, lft, vit d…)."
     catalogSearch(query: String!, limit: Int = 20, department: String, sampleType: String, fuzzy: Boolean = true): [CatalogHit!]!
-    catalogTest(id: Int, code: String): CatalogTest
+    "By MGPL id (MGPLT0001), old numeric id (10409) or code (CBC)."
+    catalogTest(id: ID, code: String): CatalogTest
     catalogTests(department: String, sampleType: String, limit: Int = 50, offset: Int = 0): [CatalogTest!]!
     catalogDepartments: [String!]!
     catalogSampleTypes: [String!]!
-    "Total MRP for test codes (or numeric ids as strings)."
+    "Total MRP for test codes, MGPL ids, or old numeric ids as strings."
     priceQuote(tests: [String!]!): PriceQuote!
   }
 `;
@@ -11198,9 +11241,12 @@ export class CatalogService {
     return catalog.search(query, { limit: opts.limit, department: opts.department ?? undefined, sampleType: opts.sampleType ?? undefined, fuzzy: opts.fuzzy ?? undefined });
   }
 
-  /** By numeric id or by code (case-insensitive). */
-  test(key: { id?: number | null; code?: string | null }): LabTest | null {
-    if (key.id != null) return catalog.getTest(key.id) ?? null;
+  /** By MGPL id ("MGPLT0001"), old numeric id ("10409") or code (case-insensitive). */
+  test(key: { id?: string | number | null; code?: string | null }): LabTest | null {
+    if (key.id != null && key.id !== "") {
+      const id = String(key.id).trim();
+      return (/^\d{1,9}$/.test(id) ? catalog.getTest(Number(id)) : catalog.getTest(id)) ?? null;
+    }
     if (key.code) return catalog.getTestByCode(key.code) ?? null;
     return null;
   }
@@ -11226,6 +11272,10 @@ export class CatalogService {
 
   isProfile(t: LabTest): boolean {
     return catalog.isProfile(t);
+  }
+
+  isPackage(t: LabTest): boolean {
+    return catalog.isPackage(t);
   }
 
   formatRange(p: Parameter, sex?: catalog.Sex | null): string {
@@ -13809,6 +13859,15 @@ async function suite(db: Db, tag: string) {
   const cat = await gql(null, '{ catalogSearch(query: "cbc", limit: 3) { test { code name pricePaise sampleType parameters { name unit range(sex: male) } } } priceQuote(tests: ["CBC", "NOPE"]) { total totalPaise unknown } }');
   const cbc = cat.data?.catalogSearch[0]?.test;
   ok(cbc?.code === "CBC" && cbc.pricePaise === 39900 && cat.data.priceQuote.unknown[0] === "NOPE", `[${tag}] catalog search + price quote (catalog-kit, no sign-in)`);
+  {
+    const T = "{ id kind legacyId code isProfile isPackage }";
+    const byCode = (await gql(null, `{ catalogTest(code: "CBC") ${T} }`)).data?.catalogTest;
+    const again = await gql(null, `query($a: ID, $b: ID) { a: catalogTest(id: $a) ${T} b: catalogTest(id: $b) ${T} }`, { a: byCode?.id, b: String(byCode?.legacyId) });
+    ok(/^MGPLT\d{4}$/.test(byCode?.id ?? "") && byCode.kind === "test" && !byCode.isProfile && again.data?.a?.code === "CBC" && again.data?.b?.id === byCode.id, `[${tag}] catalogTest: MGPL id (${byCode?.id}), kind, and lookup by MGPL id or old numeric id`);
+    const lft = (await gql(null, '{ catalogTest(code: "LIFT") { id kind isProfile } q: priceQuote(tests: ["CBC"]) { totalPaise } }')).data;
+    const byId = (await gql(null, "query($t: [String!]!) { priceQuote(tests: $t) { totalPaise unknown } }", { t: [byCode?.id] })).data?.priceQuote;
+    ok(lft?.catalogTest?.kind === "profile" && lft.catalogTest.isProfile && /^MGPLP\d{4}$/.test(lft.catalogTest.id) && byId?.totalPaise === lft.q.totalPaise && byId.unknown.length === 0, `[${tag}] a profile has an MGPLP id; priceQuote takes MGPL ids`);
+  }
 
   // ---------------------------------------------------------------- lab workflow
   const reg = await gql(owner, "mutation($i: RegisterPatientInput!) { registerPatient(input: $i) { id uhid name } }", { i: { branchId: a.branch.id, name: "Asha Patel", sex: "female", ageYears: 29, phone: "9111111111" } });

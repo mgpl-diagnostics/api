@@ -61,9 +61,9 @@ and runnable examples are in [examples/](examples/).
 | query | `catalogDepartments: [String!]!` | public |  |
 | query | `catalogSampleTypes: [String!]!` | public |  |
 | query | `catalogSearch(query: String!, limit: Int, department: String, sampleType: String, fuzzy: Boolean): [CatalogHit!]!` | public | Typo-tolerant search with lab shorthand (cbc, lft, vit d…). |
-| query | `catalogTest(id: Int, code: String): CatalogTest` | public |  |
+| query | `catalogTest(id: ID, code: String): CatalogTest` | public | By MGPL id (MGPLT0001), old numeric id (10409) or code (CBC). |
 | query | `catalogTests(department: String, sampleType: String, limit: Int, offset: Int): [CatalogTest!]!` | public |  |
-| query | `priceQuote(tests: [String!]!): PriceQuote!` | public | Total MRP for test codes (or numeric ids as strings). |
+| query | `priceQuote(tests: [String!]!): PriceQuote!` | public | Total MRP for test codes, MGPL ids, or old numeric ids as strings. |
 
 ## lab
 

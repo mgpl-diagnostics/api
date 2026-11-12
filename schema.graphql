@@ -312,6 +312,13 @@ type CatalogInterval {
   low: String
 }
 
+"""What a catalog entry is. Ids are numbered per kind."""
+enum CatalogKind {
+  package
+  profile
+  test
+}
+
 type CatalogParameter {
   calculated: Boolean!
   female: CatalogInterval
@@ -338,8 +345,21 @@ type CatalogParameter {
 type CatalogTest {
   code: String
   department: String!
-  id: Int!
+
+  """
+  MGPL id: MGPLT0001 (test), MGPLP0001 (profile), MGPLK0001 (package). Never changes or is reused.
+  """
+  id: ID!
+  isPackage: Boolean!
+
+  """A profile or a package (several tests sold together)."""
   isProfile: Boolean!
+  kind: CatalogKind!
+
+  """
+  The lab software's old numeric id (the id before catalog-kit 2); null for entries added since.
+  """
+  legacyId: Int
 
   """MRP in rupees."""
   mrp: Int
@@ -1751,7 +1771,9 @@ type Query {
 
   """Typo-tolerant search with lab shorthand (cbc, lft, vit d…)."""
   catalogSearch(department: String, fuzzy: Boolean = true, limit: Int = 20, query: String!, sampleType: String): [CatalogHit!]!
-  catalogTest(code: String, id: Int): CatalogTest
+
+  """By MGPL id (MGPLT0001), old numeric id (10409) or code (CBC)."""
+  catalogTest(code: String, id: ID): CatalogTest
   catalogTests(department: String, limit: Int = 50, offset: Int = 0, sampleType: String): [CatalogTest!]!
   creditNote(id: ID!): CreditNote
   creditNotes(customerId: ID, invoiceId: ID, limit: Int = 50, offset: Int = 0): [CreditNote!]!
@@ -1838,7 +1860,7 @@ type Query {
   """
   priceList: [PriceListEntry!]!
 
-  """Total MRP for test codes (or numeric ids as strings)."""
+  """Total MRP for test codes, MGPL ids, or old numeric ids as strings."""
   priceQuote(tests: [String!]!): PriceQuote!
   profitAndLoss(branchId: ID, from: DateTime!, to: DateTime!): ProfitAndLoss!
   receivablesSummary(asOf: DateTime!): ReceivablesSummary!
