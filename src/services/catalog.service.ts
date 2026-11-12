@@ -7,9 +7,12 @@ export class CatalogService {
     return catalog.search(query, { limit: opts.limit, department: opts.department ?? undefined, sampleType: opts.sampleType ?? undefined, fuzzy: opts.fuzzy ?? undefined });
   }
 
-  /** By numeric id or by code (case-insensitive). */
-  test(key: { id?: number | null; code?: string | null }): LabTest | null {
-    if (key.id != null) return catalog.getTest(key.id) ?? null;
+  /** By MGPL id ("MGPLT0001"), old numeric id ("10409") or code (case-insensitive). */
+  test(key: { id?: string | number | null; code?: string | null }): LabTest | null {
+    if (key.id != null && key.id !== "") {
+      const id = String(key.id).trim();
+      return (/^\d{1,9}$/.test(id) ? catalog.getTest(Number(id)) : catalog.getTest(id)) ?? null;
+    }
     if (key.code) return catalog.getTestByCode(key.code) ?? null;
     return null;
   }
@@ -35,6 +38,10 @@ export class CatalogService {
 
   isProfile(t: LabTest): boolean {
     return catalog.isProfile(t);
+  }
+
+  isPackage(t: LabTest): boolean {
+    return catalog.isPackage(t);
   }
 
   formatRange(p: Parameter, sex?: catalog.Sex | null): string {

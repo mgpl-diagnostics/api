@@ -55,6 +55,8 @@ variables already set in the real environment win over the file.
 | `MAIL_WEBHOOK_URL` | empty | Email relay for reset links when `SMTP_URL` is not set: POST `{ to, subject, text }` |
 | `MGPL_SIGNATURE_HEADER_FILE` | — | PNG for the header variant (outside the repo) |
 | `MGPL_SIGNATURE_NONHEADER_FILE` | — | PNG for the non-header variant |
+| `MGPL_UPI_ID` | — | The lab's UPI id (`name@bank`): bills with an amount due print a UPI pay QR with the amount filled in. A malformed id stops the server at start |
+| `MGPL_UPI_NAME` | the lab's name | Payee name the UPI app shows (the bank account's name) |
 | `MGPL_SIGNATURE_FILE` | — | One file for both |
 | `SHUTDOWN_DRAIN_MS` | `5000` in production, `0` otherwise | On SIGTERM, `GET /health` answers 503 this long while requests are still served ([17-scaling.md](17-scaling.md#graceful-shutdown)) |
 | `SHUTDOWN_TIMEOUT_MS` | `30000` | Exit anyway this long after the signal (API and worker) |

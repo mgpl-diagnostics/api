@@ -66,3 +66,11 @@ A branch without a state code fails billing with `BAD_USER_INPUT`. The seed scri
 
 Patients' names, phones, addresses and results are health data. Do not log request bodies, do not copy
 production data into tests (fixtures use fictional names), and keep backups encrypted.
+
+## Catalog ids (catalog-kit 2, api 0.1.6)
+
+`CatalogTest.id` is the MGPL id, a string that never changes or is reused: `MGPLT0001` for a test, `MGPLP0001`
+for a profile, `MGPLK0001` for a package. `kind` says which, and `legacyId` keeps the lab software's old numeric
+id (the `Int` id before 0.1.6). `catalogTest(id:)` takes either form, and `priceQuote` takes codes, MGPL ids or
+old ids. `isProfile` is true only for profiles now (before, any test with more than one parameter), and `isPackage`
+marks health packages. Bookings, reports and bills store test **codes**, so no stored data changes.

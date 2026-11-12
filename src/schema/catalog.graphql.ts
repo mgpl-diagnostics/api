@@ -22,8 +22,15 @@ export const catalogTypeDefs = /* GraphQL */ `
     narrative: Boolean!
   }
 
+  "What a catalog entry is. Ids are numbered per kind."
+  enum CatalogKind { test profile package }
+
   type CatalogTest {
-    id: Int!
+    "MGPL id: MGPLT0001 (test), MGPLP0001 (profile), MGPLK0001 (package). Never changes or is reused."
+    id: ID!
+    kind: CatalogKind!
+    "The lab software's old numeric id (the id before catalog-kit 2); null for entries added since."
+    legacyId: Int
     name: String!
     code: String
     shortCode: String
@@ -34,7 +41,9 @@ export const catalogTypeDefs = /* GraphQL */ `
     mrp: Int
     "MRP in paise (what bookings and invoices use)."
     pricePaise: Int
+    "A profile or a package (several tests sold together)."
     isProfile: Boolean!
+    isPackage: Boolean!
     parameterCount: Int!
     parameters: [CatalogParameter!]!
   }
@@ -45,11 +54,12 @@ export const catalogTypeDefs = /* GraphQL */ `
   extend type Query {
     "Typo-tolerant search with lab shorthand (cbc, lft, vit d…)."
     catalogSearch(query: String!, limit: Int = 20, department: String, sampleType: String, fuzzy: Boolean = true): [CatalogHit!]!
-    catalogTest(id: Int, code: String): CatalogTest
+    "By MGPL id (MGPLT0001), old numeric id (10409) or code (CBC)."
+    catalogTest(id: ID, code: String): CatalogTest
     catalogTests(department: String, sampleType: String, limit: Int = 50, offset: Int = 0): [CatalogTest!]!
     catalogDepartments: [String!]!
     catalogSampleTypes: [String!]!
-    "Total MRP for test codes (or numeric ids as strings)."
+    "Total MRP for test codes, MGPL ids, or old numeric ids as strings."
     priceQuote(tests: [String!]!): PriceQuote!
   }
 `;

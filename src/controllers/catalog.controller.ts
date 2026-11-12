@@ -10,7 +10,7 @@ export const catalogController = withErrorCodes({
   Query: {
     catalogSearch: (_: unknown, a: { query: string; limit?: number; department?: string | null; sampleType?: string | null; fuzzy?: boolean | null }, ctx: Ctx) =>
       ctx.services.catalog.search(a.query, { limit: cap(a.limit, 20), department: a.department, sampleType: a.sampleType, fuzzy: a.fuzzy }),
-    catalogTest: (_: unknown, a: { id?: number | null; code?: string | null }, ctx: Ctx) => ctx.services.catalog.test(a),
+    catalogTest: (_: unknown, a: { id?: string | null; code?: string | null }, ctx: Ctx) => ctx.services.catalog.test(a),
     catalogTests: (_: unknown, a: { department?: string | null; sampleType?: string | null; limit?: number; offset?: number }, ctx: Ctx) =>
       ctx.services.catalog.tests({ department: a.department, sampleType: a.sampleType, limit: cap(a.limit, 50), offset: a.offset ?? 0 }),
     catalogDepartments: (_: unknown, __: unknown, ctx: Ctx) => ctx.services.catalog.departments(),
@@ -23,6 +23,7 @@ export const catalogController = withErrorCodes({
   CatalogTest: {
     pricePaise: (t: LabTest) => (t.mrp == null ? null : t.mrp * 100),
     isProfile: (t: LabTest, _: unknown, ctx: Ctx) => ctx.services.catalog.isProfile(t),
+    isPackage: (t: LabTest, _: unknown, ctx: Ctx) => ctx.services.catalog.isPackage(t),
   },
   CatalogParameter: {
     male: (p: Parameter) => (p.male ? { low: bound(p.male.low), high: bound(p.male.high) } : null),

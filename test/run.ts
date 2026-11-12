@@ -106,6 +106,15 @@ async function suite(db: Db, tag: string) {
   const cat = await gql(null, '{ catalogSearch(query: "cbc", limit: 3) { test { code name pricePaise sampleType parameters { name unit range(sex: male) } } } priceQuote(tests: ["CBC", "NOPE"]) { total totalPaise unknown } }');
   const cbc = cat.data?.catalogSearch[0]?.test;
   ok(cbc?.code === "CBC" && cbc.pricePaise === 39900 && cat.data.priceQuote.unknown[0] === "NOPE", `[${tag}] catalog search + price quote (catalog-kit, no sign-in)`);
+  {
+    const T = "{ id kind legacyId code isProfile isPackage }";
+    const byCode = (await gql(null, `{ catalogTest(code: "CBC") ${T} }`)).data?.catalogTest;
+    const again = await gql(null, `query($a: ID, $b: ID) { a: catalogTest(id: $a) ${T} b: catalogTest(id: $b) ${T} }`, { a: byCode?.id, b: String(byCode?.legacyId) });
+    ok(/^MGPLT\d{4}$/.test(byCode?.id ?? "") && byCode.kind === "test" && !byCode.isProfile && again.data?.a?.code === "CBC" && again.data?.b?.id === byCode.id, `[${tag}] catalogTest: MGPL id (${byCode?.id}), kind, and lookup by MGPL id or old numeric id`);
+    const lft = (await gql(null, '{ catalogTest(code: "LIFT") { id kind isProfile } q: priceQuote(tests: ["CBC"]) { totalPaise } }')).data;
+    const byId = (await gql(null, "query($t: [String!]!) { priceQuote(tests: $t) { totalPaise unknown } }", { t: [byCode?.id] })).data?.priceQuote;
+    ok(lft?.catalogTest?.kind === "profile" && lft.catalogTest.isProfile && /^MGPLP\d{4}$/.test(lft.catalogTest.id) && byId?.totalPaise === lft.q.totalPaise && byId.unknown.length === 0, `[${tag}] a profile has an MGPLP id; priceQuote takes MGPL ids`);
+  }
 
   // ---------------------------------------------------------------- lab workflow
   const reg = await gql(owner, "mutation($i: RegisterPatientInput!) { registerPatient(input: $i) { id uhid name } }", { i: { branchId: a.branch.id, name: "Asha Patel", sex: "female", ageYears: 29, phone: "9111111111" } });
