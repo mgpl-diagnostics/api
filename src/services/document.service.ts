@@ -101,6 +101,11 @@ export class DocumentService {
   // ---------------------------------------------------------------- from a request
 
   renderReportRequest(request: ReportRequest, o: RenderOptions) {
+    // Signature images are built here from stored data, never taken from a caller: report-kit's PDF
+    // renderer reads or fetches any src it is given (a path or URL would read a file on this server
+    // or call an internal address and embed the answer in the PDF).
+    for (const s of request.report?.sections ?? [])
+      if ((s?.provenance?.reportedBy ?? []).some((r) => r?.signatureSrc !== undefined)) throw new ValidationError("A report request cannot carry signature images (signatureSrc)");
     return this.renderReport(reportFromRequest(request, { samples: this.samples }), o);
   }
 

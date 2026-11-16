@@ -302,6 +302,11 @@ async function suite(db: Db, tag: string) {
   const anyDoc = await gql(owner, '{ renderReport(request: { sample: "cbc" }, format: html) { html } invoiceTotals(request: { invoice: { invoiceNo: "T-1", patient: { name: "Kavita Sharma", age: 32, sex: "Female" }, items: ["cbc"] } }) reportTemplates { templates { id } } }');
   ok(anyDoc.data?.renderReport.html.includes("<html") && anyDoc.data.invoiceTotals.total > 0 && anyDoc.data.reportTemplates.templates.length > 20, `[${tag}] renderReport / invoiceTotals / reportTemplates from request data`);
   ok(code(await gql(owner, "{ renderReport(request: { patient: { name: \"X\" } }) { fileName } }")) === "BAD_USER_INPUT", `[${tag}] bad report request → BAD_USER_INPUT`);
+  for (const src of ["/../../../../etc/hostname.png", "http://127.0.0.1:9/x.png", "data:image/png;base64,iVBORw0KGgo="]) {
+    const forged = { report: { patient: { name: "Kavita Sharma", age: 32, sex: "Female" }, sections: [{ title: "BIOCHEMISTRY", rows: [], provenance: { performedBy: "Fictional Lab", reportedBy: [{ name: "Dr. Test", signatureSrc: src }] } }] } };
+    const r = await gql(owner, "query ($r: JSON!) { renderReport(request: $r) { fileName } }", { r: forged });
+    ok(code(r) === "BAD_USER_INPUT", `[${tag}] renderReport refuses a signatureSrc from the request (${src.slice(0, 12)}…): no file read, no fetch`);
+  }
 
   const cash = (await db.rawRepos.ledgers.findBySystemKey(a.org.id, "cash"))!;
   const capital = (await db.rawRepos.ledgers.findBySystemKey(a.org.id, "capital"))!;
